@@ -59,11 +59,14 @@ static MenuRenderer::TelemetryData BuildMockTelemetry(const MenuState &state) {
 
 MenuRenderer::MenuRenderer(MenuState &state) : state_(state) {
     int w = 0, h = 0;
-    LoadIcon("icons/antenna.png", icon_antenna_, w, h);
-    LoadIcon("icons/battery_per.png", icon_batt_cell_, w, h);
-    LoadIcon("icons/battery_all.png", icon_batt_pack_, w, h);
-    LoadIcon("icons/gps.png", icon_gps_, w, h);
-    LoadIcon("icons/monitor.png", icon_monitor_, w, h);
+    const char *icon_base = "/storage/digitalfpv/icons/";
+    LoadIcon(std::string(icon_base + std::string("antenna.png")).c_str(), icon_antenna_, w, h);
+    LoadIcon(std::string(icon_base + std::string("battery_per.png")).c_str(), icon_batt_cell_, w, h);
+    LoadIcon(std::string(icon_base + std::string("battery_all.png")).c_str(), icon_batt_pack_, w, h);
+    LoadIcon(std::string(icon_base + std::string("gps.png")).c_str(), icon_gps_, w, h);
+    LoadIcon(std::string(icon_base + std::string("monitor.png")).c_str(), icon_monitor_, w, h);
+    LoadIcon(std::string(icon_base + std::string("temp_air.png")).c_str(), icon_temp_air_, w, h);
+    LoadIcon(std::string(icon_base + std::string("temp_ground.png")).c_str(), icon_temp_ground_, w, h);
 }
 bool MenuRenderer::LoadIcon(const char *path, ImTextureID &out_id, int &out_w, int &out_h) {
     FILE *fp = std::fopen(path, "rb");
@@ -302,11 +305,11 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
         char sky_buf[32];
         snprintf(sky_buf, sizeof(sky_buf), "\u5929\u7a7a\u7aef\u6e29\u5ea6: %.1f\u2103", data.sky_temp_c);
         if (data.has_sky_temp) {
-            icon_text_line(sky_buf, icon_antenna_);
+            icon_text_line(sky_buf, icon_temp_air_);
         }
         char ground_buf[32];
         snprintf(ground_buf, sizeof(ground_buf), "\u5730\u9762\u7aef\u6e29\u5ea6: %.1f\u2103", data.ground_temp_c);
-        icon_text_line(ground_buf, icon_antenna_);
+        icon_text_line(ground_buf, icon_temp_ground_);
         ImGui::PopStyleColor();
     }
     ImGui::End();

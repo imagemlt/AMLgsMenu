@@ -50,4 +50,6 @@ private:
     ImTextureID icon_batt_pack_{};
     ImTextureID icon_gps_{};
     ImTextureID icon_monitor_{};
+    ImTextureID icon_temp_air_{};
+    ImTextureID icon_temp_ground_{};
 };
