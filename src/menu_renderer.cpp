@@ -78,7 +78,8 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
 
     const float icon_size = 18.0f * 1.5f;
     const float icon_gap = 6.0f * 1.5f;
-    const ImU32 text_shadow = IM_COL32(0, 0, 0, 180);
+    const ImU32 text_outline = IM_COL32(255, 255, 255, 220); // white edge
+    const ImU32 text_fill = IM_COL32(0, 0, 0, 255);          // black body
 
     auto draw_icon = [&](ImVec2 pos) {
         ImU32 fill = IM_COL32(80, 120, 200, 180);
@@ -118,14 +119,14 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
         draw_icon(icon_pos);
         ImVec2 text_pos(icon_pos.x + icon_size + icon_gap, pos.y);
         // Shadow
-        draw_list->AddText(ImVec2(text_pos.x + 1, text_pos.y + 1), text_shadow, text.c_str());
+        draw_list->AddText(ImVec2(text_pos.x + 1.2f, text_pos.y + 1.2f), text_outline, text.c_str());
         draw_list->AddText(text_pos, color, text.c_str());
     };
 
     auto draw_centered_text_no_icon = [&](ImVec2 pos, const std::string &text, ImU32 color) {
         ImVec2 size = ImGui::CalcTextSize(text.c_str());
         ImVec2 text_pos(pos.x - size.x * 0.5f, pos.y);
-        draw_list->AddText(ImVec2(text_pos.x + 1, text_pos.y + 1), text_shadow, text.c_str());
+        draw_list->AddText(ImVec2(text_pos.x + 1.2f, text_pos.y + 1.2f), text_outline, text.c_str());
         draw_list->AddText(text_pos, color, text.c_str());
     };
 
@@ -137,7 +138,7 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
     }
     // Place signals near top center with a small margin
     draw_centered_text(ImVec2(center.x, viewport->Pos.y + viewport->Size.y * 0.05f),
-                       signal.str(), IM_COL32(255, 255, 255, 230));
+                       signal.str(), text_fill);
 
     if (data.has_flight_mode) {
         draw_centered_text_no_icon(ImVec2(center.x, center.y - viewport->Size.y * 0.25f),
@@ -161,6 +162,7 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
                                    viewport->Pos.y + viewport->Size.y - 64.0f));
     ImGui::SetNextWindowBgAlpha(0.0f);
     if (data.has_gps && ImGui::Begin("OSD_GPS", nullptr, overlay_flags)) {
+        ImGui::PushStyleColor(ImGuiCol_Text, text_fill);
         char gps_buf[128];
         snprintf(gps_buf, sizeof(gps_buf), "GPS: %.5f, %.5f, %.1fm",
                  data.latitude, data.longitude, data.altitude_m);
@@ -168,6 +170,7 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
         char home_buf[64];
         snprintf(home_buf, sizeof(home_buf), "\u79bb\u5bb6\u8ddd\u79bb: %.1fm", data.home_distance_m);
         icon_text_line(home_buf);
+        ImGui::PopStyleColor();
     }
     ImGui::End();
 
@@ -176,22 +179,26 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
                             ImGuiCond_Always, ImVec2(1.0f, 1.0f));
     ImGui::SetNextWindowBgAlpha(0.0f);
     if (ImGui::Begin("OSD_VIDEO", nullptr, overlay_flags)) {
+        ImGui::PushStyleColor(ImGuiCol_Text, text_fill);
         char video_buf[128];
         snprintf(video_buf, sizeof(video_buf), "\u89c6\u9891: %.1f Mbps %s @ %dHz",
                  data.bitrate_mbps, data.video_resolution.c_str(), data.video_refresh_hz);
         icon_text_line(video_buf);
+        ImGui::PopStyleColor();
     }
     ImGui::End();
 
     ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + 16.0f, center.y - 24.0f));
     ImGui::SetNextWindowBgAlpha(0.0f);
     if (data.has_battery && ImGui::Begin("OSD_BATT", nullptr, overlay_flags)) {
+        ImGui::PushStyleColor(ImGuiCol_Text, text_fill);
         char cell_buf[32];
         snprintf(cell_buf, sizeof(cell_buf), "\u5355\u8282: %.2fV", data.cell_voltage);
         icon_text_line(cell_buf);
         char pack_buf[32];
         snprintf(pack_buf, sizeof(pack_buf), "\u603b\u7535: %.2fV", data.pack_voltage);
         icon_text_line(pack_buf);
+        ImGui::PopStyleColor();
     }
     ImGui::End();
 
@@ -199,6 +206,7 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
                             ImGuiCond_Always, ImVec2(1.0f, 0.5f));
     ImGui::SetNextWindowBgAlpha(0.0f);
     if (ImGui::Begin("OSD_TEMP", nullptr, overlay_flags)) {
+        ImGui::PushStyleColor(ImGuiCol_Text, text_fill);
         char sky_buf[32];
         snprintf(sky_buf, sizeof(sky_buf), "\u5929\u7a7a\u7aef\u6e29\u5ea6: %.1f\u2103", data.sky_temp_c);
         if (data.has_sky_temp) {
@@ -207,6 +215,7 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
         char ground_buf[32];
         snprintf(ground_buf, sizeof(ground_buf), "\u5730\u9762\u7aef\u6e29\u5ea6: %.1f\u2103", data.ground_temp_c);
         icon_text_line(ground_buf);
+        ImGui::PopStyleColor();
     }
     ImGui::End();
 }
