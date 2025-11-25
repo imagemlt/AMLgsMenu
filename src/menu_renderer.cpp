@@ -119,7 +119,7 @@ bool MenuRenderer::LoadIcon(const char *path, ImTextureID &out_id, int &out_w, i
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, static_cast<GLsizei>(width), static_cast<GLsizei>(height),
                  0, GL_RGBA, GL_UNSIGNED_BYTE, data.data());
-    out_id = reinterpret_cast<ImTextureID>(static_cast<uintptr_t>(tex));
+    out_id = static_cast<ImTextureID>(tex);
     out_w = static_cast<int>(width);
     out_h = static_cast<int>(height);
     return true;
@@ -129,7 +129,7 @@ MenuRenderer::~MenuRenderer() {
     int count = 0;
     auto collect = [&](ImTextureID id) {
         if (id) {
-            tex_ids[count++] = static_cast<GLuint>(reinterpret_cast<uintptr_t>(id));
+            tex_ids[count++] = static_cast<GLuint>(id);
         }
     };
     collect(icon_antenna_);
