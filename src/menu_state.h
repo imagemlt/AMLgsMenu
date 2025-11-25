@@ -3,12 +3,26 @@
 #include "video_mode.h"
 
 #include <array>
+#include <functional>
 #include <string>
 #include <vector>
 
 class MenuState {
 public:
     MenuState(std::vector<VideoMode> sky_modes, std::vector<VideoMode> ground_modes);
+
+    enum class SettingType {
+        Channel,
+        Bandwidth,
+        SkyMode,
+        GroundMode,
+        Bitrate,
+        SkyPower,
+        GroundPower,
+        Recording,
+    };
+
+    using SettingChangedCallback = std::function<void(SettingType)>;
 
     const std::vector<int> &Channels() const { return channels_; }
     const std::array<const char *, 3> &Bandwidths() const { return bandwidths_; }
@@ -28,20 +42,22 @@ public:
     bool Recording() const { return recording_; }
     bool ShouldExit() const { return should_exit_; }
 
-    void SetChannelIndex(int index) { channel_index_ = index; }
-    void SetBandwidthIndex(int index) { bandwidth_index_ = index; }
-    void SetSkyModeIndex(int index) { sky_mode_index_ = index; }
-    void SetGroundModeIndex(int index) { ground_mode_index_ = index; }
-    void SetBitrateIndex(int index) { bitrate_index_ = index; }
-    void SetSkyPowerIndex(int index) { sky_power_index_ = index; }
-    void SetGroundPowerIndex(int index) { ground_power_index_ = index; }
+    void SetChannelIndex(int index);
+    void SetBandwidthIndex(int index);
+    void SetSkyModeIndex(int index);
+    void SetGroundModeIndex(int index);
+    void SetBitrateIndex(int index);
+    void SetSkyPowerIndex(int index);
+    void SetGroundPowerIndex(int index);
     void ToggleMenuVisibility() { menu_visible_ = !menu_visible_; }
 
-    void ToggleRecording() { recording_ = !recording_; }
+    void ToggleRecording();
     void RequestExit() { should_exit_ = true; }
+    void SetOnChangeCallback(SettingChangedCallback cb) { on_change_callback_ = std::move(cb); }
 
 private:
     static std::vector<int> BuildRange(int start, int end);
+    void NotifyChange(SettingType type) const;
 
     std::vector<int> channels_;
     std::vector<int> bitrates_;
@@ -49,6 +65,8 @@ private:
     std::vector<VideoMode> sky_modes_;
     std::vector<VideoMode> ground_modes_;
     std::array<const char *, 3> bandwidths_{{"10 MHz", "20 MHz", "40 MHz"}};
+
+    SettingChangedCallback on_change_callback_;
 
     int channel_index_ = 0;
     int bandwidth_index_ = 0;
@@ -61,4 +79,3 @@ private:
     bool recording_ = false;
     bool should_exit_ = false;
 };
-
