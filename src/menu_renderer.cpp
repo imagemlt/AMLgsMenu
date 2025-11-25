@@ -76,8 +76,8 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
     const ImVec2 center(viewport->Pos.x + viewport->Size.x * 0.5f,
                         viewport->Pos.y + viewport->Size.y * 0.5f);
 
-    const float icon_size = 18.0f;
-    const float icon_gap = 6.0f;
+    const float icon_size = 18.0f * 1.5f;
+    const float icon_gap = 6.0f * 1.5f;
     const ImU32 text_shadow = IM_COL32(0, 0, 0, 180);
 
     auto draw_icon = [&](ImVec2 pos) {
@@ -229,7 +229,7 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag) {
         ImGui::Text("\u65e0\u7ebf\u94fe\u8def\u914d\u7f6e");
         ImGui::Separator();
 
-        ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(8, 6));
+    ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(8, 6));
         if (ImGui::BeginTable("menu_table", 4, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoSavedSettings)) {
             ImGui::TableSetupColumn("L1", ImGuiTableColumnFlags_WidthStretch, 0.22f);
             ImGui::TableSetupColumn("C1", ImGuiTableColumnFlags_WidthStretch, 0.28f);
@@ -348,18 +348,20 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag) {
                          }
                      });
 
-            // bottom row: buttons side by side
+            // bottom row: buttons grouped together on the right half
             ImGui::TableNextRow();
             ImGui::TableSetColumnIndex(0);
             ImGui::TextUnformatted(" ");
             ImGui::TableSetColumnIndex(1);
+            ImGui::TextUnformatted(" ");
+            ImGui::TableSetColumnIndex(2);
+            ImGui::TextUnformatted(" ");
+            ImGui::TableSetColumnIndex(3);
             ImVec2 btn_sz(-1, 0);
             if (ImGui::Button("\u786e\u8ba4", btn_sz)) {
                 state_.ToggleMenuVisibility();
             }
-            ImGui::TableSetColumnIndex(2);
-            ImGui::TextUnformatted(" ");
-            ImGui::TableSetColumnIndex(3);
+            ImGui::SameLine();
             if (ImGui::Button("\u5173\u95ed", btn_sz)) {
                 state_.ToggleMenuVisibility();
             }
