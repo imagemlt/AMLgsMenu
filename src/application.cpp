@@ -68,9 +68,12 @@ bool Application::Initialize(const std::string &font_path) {
             SaveConfigValue("bandwidth", std::to_string((menu_state_->BandwidthIndex() == 0) ? 10 :
                                                         (menu_state_->BandwidthIndex() == 1) ? 20 : 40));
             break;
-        case MenuState::SettingType::GroundMode:
-            SaveConfigValue("groud_res", menu_state_->GroundModes()[menu_state_->GroundModeIndex()].label);
+        case MenuState::SettingType::GroundMode: {
+            // update ground_res and clean legacy typo
+            config_kv_.erase("groud_res");
+            SaveConfigValue("ground_res", menu_state_->GroundModes()[menu_state_->GroundModeIndex()].label);
             break;
+        }
         case MenuState::SettingType::GroundPower:
             SaveConfigValue("driver_txpower_override", std::to_string(menu_state_->PowerLevels()[menu_state_->GroundPowerIndex()]));
             break;
@@ -344,7 +347,11 @@ void Application::LoadConfig() {
             menu_state_->SetSkyPowerIndex(idx);
         }
     }
-    auto it_res = config_kv_.find("groud_res");
+    // support both correct key and legacy typo
+    auto it_res = config_kv_.find("ground_res");
+    if (it_res == config_kv_.end()) {
+        it_res = config_kv_.find("groud_res");
+    }
     if (it_res != config_kv_.end()) {
         std::string label = it_res->second;
         while (!label.empty() && (label.back() == '*' || label.back() == ' ' || label.back() == '\t'))
