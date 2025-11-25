@@ -6,8 +6,8 @@ PKG_LICENSE="proprietary"
 PKG_SITE="https://github.com/imagemlt/AMLgsMenu"
 PKG_URL="${PKG_SITE}.git"
 PKG_GIT_CLONE_BRANCH="main"
-PKG_DEPENDS_TARGET="toolchain SDL2"
-PKG_LONGDESC="Transparent OSD and configuration menu for Amlogic GLES/fbdev targets using SDL2 + Dear ImGui."
+PKG_DEPENDS_TARGET="toolchain libinput eudev"
+PKG_LONGDESC="Transparent OSD and configuration menu for Amlogic GLES/fbdev targets using libinput + Dear ImGui (no SDL)."
 PKG_TOOLCHAIN="cmake"
 
 post_unpack() {
@@ -23,5 +23,5 @@ PKG_CMAKE_OPTS_TARGET="-DIMGUI_ROOT=${PKG_BUILD}/third_party/imgui -DAML_ENABLE_
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/bin
-  cp ${PKG_BUILD}/.${TARGET_NAME}/aml_gs_menu ${INSTALL}/usr/bin/
+  cp ${PKG_BUILD}/.${TARGET_NAME}/AMLgsMenu ${INSTALL}/usr/bin/
 }

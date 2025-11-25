@@ -2,75 +2,42 @@
 
 #include "imgui.h"
 #include "backends/imgui_impl_opengl3.h"
-#include "backends/imgui_impl_sdl2.h"
 #include "video_mode.h"
 
-#include <SDL_opengles2.h>
+#include <EGL/egl.h>
+#include <algorithm>
+#include <fcntl.h>
+#include <linux/fb.h>
+#include <linux/input-event-codes.h>
+#include <poll.h>
+#include <sys/ioctl.h>
+#include <unistd.h>
 
 Application::Application() = default;
 Application::~Application() { Shutdown(); }
 
 bool Application::Initialize(const std::string &font_path) {
-    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER) != 0) {
-        SDL_Log("Failed to init SDL2: %s", SDL_GetError());
+    if (!InitFramebuffer(fb_)) {
         return false;
     }
-
-    SDL_GL_SetAttribute(SDL_GL_ACCELERATED_VISUAL, 1);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
-    SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
-    SDL_GL_SetAttribute(SDL_GL_ALPHA_SIZE, 8);
-
-    window_ = SDL_CreateWindow(
-        "AML GS Menu",
-        SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-        1280, 720,
-        SDL_WINDOW_OPENGL | SDL_WINDOW_FULLSCREEN_DESKTOP | SDL_WINDOW_ALLOW_HIGHDPI);
-    if (!window_) {
-        SDL_Log("Failed to create SDL window: %s", SDL_GetError());
-        Shutdown();
+    if (!InitEgl(fb_)) {
         return false;
     }
-
-    gl_context_ = CreateGLContext(window_);
-    if (!gl_context_) {
-        SDL_Log("Failed to create GL context: %s", SDL_GetError());
-        Shutdown();
+    if (!InitInput()) {
         return false;
     }
-
-    SDL_GL_MakeCurrent(window_, gl_context_);
-    SDL_GL_SetSwapInterval(1);
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO &io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-    io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
     ImGui::StyleColorsDark();
 
     if (!font_path.empty()) {
-        ImFont *font = io.Fonts->AddFontFromFileTTF(font_path.c_str(), 18.0f);
-        if (!font) {
-            SDL_Log("Failed to load font at '%s', fallback to default font", font_path.c_str());
-        }
+        io.Fonts->AddFontFromFileTTF(font_path.c_str(), 18.0f);
     }
 
-    ImGui_ImplSDL2_InitForOpenGL(window_, gl_context_);
     ImGui_ImplOpenGL3_Init("#version 100");
-
-    // Open first available game controller for navigation
-    for (int i = 0; i < SDL_NumJoysticks(); ++i) {
-        if (SDL_IsGameController(i)) {
-            controller_ = SDL_GameControllerOpen(i);
-            if (controller_) {
-                SDL_Log("Opened game controller: %s", SDL_GameControllerName(controller_));
-            }
-            break;
-        }
-    }
 
     auto sky_modes = DefaultSkyModes();
     auto ground_modes = LoadHdmiModes("/sys/class/amhdmitx/amhdmitx0/modes");
@@ -83,42 +50,30 @@ bool Application::Initialize(const std::string &font_path) {
 
     running_ = true;
     initialized_ = true;
+    last_frame_time_ = std::chrono::steady_clock::now();
     return true;
 }
 
 void Application::Run() {
     ImGuiIO &io = ImGui::GetIO();
+    io.DisplaySize = ImVec2(static_cast<float>(fb_.width), static_cast<float>(fb_.height));
+    io.MousePos = ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f);
 
     while (running_ && !menu_state_->ShouldExit()) {
-        SDL_Event event;
-        while (SDL_PollEvent(&event)) {
-            if (event.type == SDL_MOUSEBUTTONDOWN && event.button.button == SDL_BUTTON_RIGHT) {
-                menu_state_->ToggleMenuVisibility();
-            }
-
-            if (event.type == SDL_CONTROLLERBUTTONDOWN &&
-                event.cbutton.button == SDL_CONTROLLER_BUTTON_X) {
-                menu_state_->ToggleMenuVisibility();
-            }
-
-            ImGui_ImplSDL2_ProcessEvent(&event);
-            if (event.type == SDL_QUIT) {
-                running_ = false;
-            }
-        }
+        ProcessInput(running_);
+        UpdateDeltaTime();
 
         ImGui_ImplOpenGL3_NewFrame();
-        ImGui_ImplSDL2_NewFrame();
         ImGui::NewFrame();
 
         renderer_->Render(running_);
 
         ImGui::Render();
-        glViewport(0, 0, static_cast<int>(io.DisplaySize.x), static_cast<int>(io.DisplaySize.y));
+        glViewport(0, 0, fb_.width, fb_.height);
         glClearColor(0, 0, 0, 0);
         glClear(GL_COLOR_BUFFER_BIT);
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-        SDL_GL_SwapWindow(window_);
+        eglSwapBuffers(egl_display_, egl_surface_);
     }
 }
 
@@ -131,27 +86,157 @@ void Application::Shutdown() {
     running_ = false;
 
     ImGui_ImplOpenGL3_Shutdown();
-    ImGui_ImplSDL2_Shutdown();
     ImGui::DestroyContext();
 
-    if (gl_context_) {
-        SDL_GL_DeleteContext(gl_context_);
-        gl_context_ = nullptr;
+    if (egl_display_ != EGL_NO_DISPLAY) {
+        eglMakeCurrent(egl_display_, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
     }
-
-    if (controller_) {
-        SDL_GameControllerClose(controller_);
-        controller_ = nullptr;
+    if (egl_context_ != EGL_NO_CONTEXT) {
+        eglDestroyContext(egl_display_, egl_context_);
+        egl_context_ = EGL_NO_CONTEXT;
     }
-
-    if (window_) {
-        SDL_DestroyWindow(window_);
-        window_ = nullptr;
+    if (egl_surface_ != EGL_NO_SURFACE) {
+        eglDestroySurface(egl_display_, egl_surface_);
+        egl_surface_ = EGL_NO_SURFACE;
     }
-
-    SDL_Quit();
+    if (egl_display_ != EGL_NO_DISPLAY) {
+        eglTerminate(egl_display_);
+        egl_display_ = EGL_NO_DISPLAY;
+    }
+    if (li_ctx_) {
+        libinput_unref(li_ctx_);
+        li_ctx_ = nullptr;
+    }
+    if (udev_ctx_) {
+        udev_unref(udev_ctx_);
+        udev_ctx_ = nullptr;
+    }
+    if (fb_.fd >= 0) {
+        close(fb_.fd);
+        fb_.fd = -1;
+    }
 }
 
-SDL_GLContext Application::CreateGLContext(SDL_Window *window) {
-    return SDL_GL_CreateContext(window);
+bool Application::InitFramebuffer(FbContext &fb) {
+    fb.fd = open("/dev/fb0", O_RDWR);
+    if (fb.fd < 0) {
+        return false;
+    }
+    fb_var_screeninfo vinfo{};
+    if (ioctl(fb.fd, FBIOGET_VSCREENINFO, &vinfo) != 0) {
+        return false;
+    }
+    fb.width = static_cast<int>(vinfo.xres);
+    fb.height = static_cast<int>(vinfo.yres);
+    return true;
+}
+
+bool Application::InitEgl(const FbContext &fb) {
+    EGLint major = 0, minor = 0;
+    EGLint num_configs = 0;
+    EGLint attr[] = {
+        EGL_RED_SIZE, 8,
+        EGL_GREEN_SIZE, 8,
+        EGL_BLUE_SIZE, 8,
+        EGL_ALPHA_SIZE, 8,
+        EGL_DEPTH_SIZE, 0,
+        EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
+        EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
+        EGL_NONE};
+
+    egl_display_ = eglGetDisplay(EGL_DEFAULT_DISPLAY);
+    if (egl_display_ == EGL_NO_DISPLAY) return false;
+    if (!eglInitialize(egl_display_, &major, &minor)) return false;
+    if (!eglChooseConfig(egl_display_, attr, &egl_config_, 1, &num_configs) || num_configs == 0) {
+        return false;
+    }
+    EGLint ctx_attr[] = {EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE};
+    egl_context_ = eglCreateContext(egl_display_, egl_config_, EGL_NO_CONTEXT, ctx_attr);
+    if (egl_context_ == EGL_NO_CONTEXT) return false;
+
+    fbdev_window native_window{fb.width, fb.height};
+    egl_surface_ = eglCreateWindowSurface(egl_display_, egl_config_, &native_window, nullptr);
+    if (egl_surface_ == EGL_NO_SURFACE) return false;
+    if (!eglMakeCurrent(egl_display_, egl_surface_, egl_surface_, egl_context_)) return false;
+    eglSwapInterval(egl_display_, 1);
+    return true;
+}
+
+bool Application::InitInput() {
+    udev_ctx_ = udev_new();
+    if (!udev_ctx_) return false;
+    li_ctx_ = libinput_udev_create_context(nullptr, nullptr, udev_ctx_);
+    if (!li_ctx_) return false;
+    if (libinput_udev_assign_seat(li_ctx_, "seat0") != 0) {
+        return false;
+    }
+    return true;
+}
+
+void Application::ProcessInput(bool &running) {
+    if (!li_ctx_) return;
+    pollfd pfd{};
+    pfd.fd = libinput_get_fd(li_ctx_);
+    pfd.events = POLLIN;
+    poll(&pfd, 1, 1);
+    if (libinput_dispatch(li_ctx_) != 0) return;
+    libinput_event *event = nullptr;
+    while ((event = libinput_get_event(li_ctx_)) != nullptr) {
+        HandleLibinputEvent(event, running);
+        libinput_event_destroy(event);
+    }
+}
+
+void Application::HandleLibinputEvent(struct libinput_event *event, bool &running) {
+    ImGuiIO &io = ImGui::GetIO();
+    switch (libinput_event_get_type(event)) {
+    case LIBINPUT_EVENT_POINTER_MOTION: {
+        auto *m = libinput_event_get_pointer_event(event);
+        io.MousePos.x += static_cast<float>(libinput_event_pointer_get_dx(m));
+        io.MousePos.y += static_cast<float>(libinput_event_pointer_get_dy(m));
+        break;
+    }
+    case LIBINPUT_EVENT_POINTER_BUTTON: {
+        auto *b = libinput_event_get_pointer_event(event);
+        uint32_t button = libinput_event_pointer_get_button(b);
+        auto state = libinput_event_pointer_get_button_state(b);
+        bool pressed = (state == LIBINPUT_BUTTON_STATE_PRESSED);
+        if (button == BTN_LEFT) io.MouseDown[0] = pressed;
+        if (button == BTN_RIGHT && pressed) menu_state_->ToggleMenuVisibility();
+        break;
+    }
+    case LIBINPUT_EVENT_POINTER_AXIS: {
+        auto *a = libinput_event_get_pointer_event(event);
+        if (libinput_event_pointer_has_axis(a, LIBINPUT_POINTER_AXIS_SCROLL_VERTICAL)) {
+            double v = libinput_event_pointer_get_axis_value(a, LIBINPUT_POINTER_AXIS_SCROLL_VERTICAL);
+            io.MouseWheel += static_cast<float>(-v);
+        }
+        break;
+    }
+    case LIBINPUT_EVENT_KEYBOARD_KEY: {
+        auto *k = libinput_event_get_keyboard_event(event);
+        uint32_t key = libinput_event_keyboard_get_key(k);
+        auto state = libinput_event_keyboard_get_key_state(k);
+        if (state == LIBINPUT_KEY_STATE_PRESSED) {
+            if (key == KEY_X || key == BTN_WEST) {
+                menu_state_->ToggleMenuVisibility();
+            }
+            if (key == KEY_ESC) {
+                running = false;
+            }
+        }
+        break;
+    }
+    default:
+        break;
+    }
+    io.MousePos.x = std::max(0.0f, std::min(io.MousePos.x, static_cast<float>(fb_.width)));
+    io.MousePos.y = std::max(0.0f, std::min(io.MousePos.y, static_cast<float>(fb_.height)));
+}
+
+void Application::UpdateDeltaTime() {
+    ImGuiIO &io = ImGui::GetIO();
+    auto now = std::chrono::steady_clock::now();
+    io.DeltaTime = std::chrono::duration<float>(now - last_frame_time_).count();
+    last_frame_time_ = now;
 }
