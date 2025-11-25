@@ -148,7 +148,7 @@ MenuRenderer::~MenuRenderer() {
 void MenuRenderer::Render(bool &running_flag) {
     const ImGuiViewport *viewport = ImGui::GetMainViewport();
     const float now = static_cast<float>(ImGui::GetTime());
-    if (last_osd_update_time_ < 0.0f || (now - last_osd_update_time_) >= 0.1f) {
+    if (last_osd_update_time_ < 0.0f || (now - last_osd_update_time_) >= 1.0f) {
         cached_telemetry_ = BuildMockTelemetry(state_);
         last_osd_update_time_ = now;
     }
