@@ -346,7 +346,10 @@ void Application::LoadConfig() {
     }
     auto it_res = config_kv_.find("groud_res");
     if (it_res != config_kv_.end()) {
-        int idx = FindGroundModeIndex(it_res->second);
+        std::string label = it_res->second;
+        while (!label.empty() && (label.back() == '*' || label.back() == ' ' || label.back() == '\t'))
+            label.pop_back();
+        int idx = FindGroundModeIndex(label);
         if (idx >= 0) menu_state_->SetGroundModeIndex(idx);
     }
 }

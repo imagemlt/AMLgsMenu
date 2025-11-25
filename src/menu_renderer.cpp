@@ -42,7 +42,14 @@ static MenuRenderer::TelemetryData BuildMockTelemetry(const MenuState &state) {
     std::ostringstream res;
     res << mode.width << "x" << mode.height;
     data.video_resolution = res.str();
-    int fps = GetOutputFps();
+    static float last_fps_time = -1.0f;
+    static int cached_fps = 0;
+    const float now = static_cast<float>(ImGui::GetTime());
+    if (last_fps_time < 0.0f || (now - last_fps_time) >= 1.0f) {
+        cached_fps = GetOutputFps();
+        last_fps_time = now;
+    }
+    int fps = cached_fps;
     data.video_refresh_hz = fps > 0 ? fps : (mode.refresh ? mode.refresh : 60);
     data.bitrate_mbps = std::max(1.0f, 6.0f + 2.0f * std::sin(t * 0.4f));
 
@@ -148,7 +155,7 @@ MenuRenderer::~MenuRenderer() {
 void MenuRenderer::Render(bool &running_flag) {
     const ImGuiViewport *viewport = ImGui::GetMainViewport();
     const float now = static_cast<float>(ImGui::GetTime());
-    if (last_osd_update_time_ < 0.0f || (now - last_osd_update_time_) >= 1.0f) {
+    if (last_osd_update_time_ < 0.0f || (now - last_osd_update_time_) >= 0.1f) {
         cached_telemetry_ = BuildMockTelemetry(state_);
         last_osd_update_time_ = now;
     }
