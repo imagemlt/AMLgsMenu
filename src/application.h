@@ -5,13 +5,14 @@
 
 #include <SDL.h>
 #include <memory>
+#include <string>
 
 class Application {
 public:
     Application();
     ~Application();
 
-    bool Initialize();
+    bool Initialize(const std::string &font_path = "");
     void Run();
     void Shutdown();
 
@@ -26,4 +27,3 @@ private:
     std::unique_ptr<MenuState> menu_state_;
     std::unique_ptr<MenuRenderer> renderer_;
 };
-

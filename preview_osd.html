@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>AML GS OSD 预览</title>
+    <style>
+        :root {
+            --bg: #02050a;
+            --glass: rgba(10, 15, 25, 0.55);
+            --glass-lite: rgba(10, 15, 25, 0.25);
+            --accent: #4fdcff;
+            --text: #e9eef7;
+            --muted: #9db0c6;
+            --warn: #ffbc42;
+        }
+        * { box-sizing: border-box; }
+        body, html {
+            margin: 0; padding: 0; width: 100%; height: 100%;
+            background: var(--bg);
+            font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+            color: var(--text);
+            overflow: hidden;
+        }
+        /* 模拟视频层 */
+        .video-layer {
+            position: absolute; inset: 0;
+            background: radial-gradient(120% 120% at 50% 50%, #113455 0%, #061522 60%, #02050a 100%);
+            filter: saturate(1.2);
+        }
+        /* 半透明网格增强空间感 */
+        .grid {
+            position: absolute; inset: 0;
+            background-image:
+                    linear-gradient(rgba(255,255,255,0.05) 1px, transparent 1px),
+                    linear-gradient(90deg, rgba(255,255,255,0.05) 1px, transparent 1px);
+            background-size: 120px 120px;
+            opacity: 0.2;
+        }
+        /* OSD 共用 */
+        .osd {
+            position: absolute;
+            pointer-events: none;
+            font-size: 16px;
+            line-height: 1.3;
+            text-shadow: 0 0 4px rgba(0,0,0,0.8);
+        }
+        .icon {
+            width: 18px; height: 18px;
+            border-radius: 3px;
+            background: linear-gradient(135deg, rgba(79,220,255,0.8), rgba(79,220,255,0.25));
+            border: 1.5px solid rgba(210,235,255,0.9);
+            margin-right: 8px;
+            flex: 0 0 auto;
+        }
+        .row {
+            display: flex;
+            align-items: center;
+            margin: 2px 0;
+        }
+        /* 水平线 */
+        .horizon {
+            position: absolute;
+            left: 50%; top: 50%;
+            width: 50%;
+            height: 2px;
+            background: linear-gradient(90deg, transparent 0%, #fff 10%, #fff 90%, transparent 100%);
+            transform: translate(-50%, -50%);
+            box-shadow: 0 0 12px rgba(255,255,255,0.35);
+        }
+        .top-center { top: 15%; left: 50%; transform: translate(-50%, -50%); text-align: center; }
+        .mode { top: 25%; left: 50%; transform: translate(-50%, -50%); font-size: 18px; color: var(--accent); }
+        .bottom-left { left: 16px; bottom: 24px; }
+        .bottom-right { right: 16px; bottom: 24px; text-align: right; }
+        .mid-left { left: 16px; top: 50%; transform: translateY(-50%); }
+        .mid-right { right: 16px; top: 50%; transform: translateY(-50%); text-align: right; }
+        .glass {
+            background: var(--glass);
+            padding: 10px 12px;
+            border-radius: 10px;
+            border: 1px solid rgba(255,255,255,0.08);
+            box-shadow: 0 10px 40px rgba(0,0,0,0.35);
+        }
+        .glass-lite {
+            background: var(--glass-lite);
+            padding: 10px 12px;
+            border-radius: 10px;
+            border: 1px solid rgba(255,255,255,0.08);
+        }
+        /* 配置菜单 */
+        .menu {
+            position: absolute;
+            width: 50%;
+            height: 50%;
+            left: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(10,15,25,0.25);
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 14px;
+            backdrop-filter: blur(8px);
+            box-shadow: 0 20px 60px rgba(0,0,0,0.45);
+            padding: 18px;
+            display: grid;
+            grid-template-rows: auto 1fr auto;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 160ms ease-out;
+        }
+        .menu.visible {
+            opacity: 1;
+            pointer-events: auto;
+        }
+        .menu h2 {
+            margin: 0 0 8px;
+            font-size: 18px;
+            letter-spacing: 0.5px;
+        }
+        .menu .fields {
+            overflow: auto;
+            padding-right: 4px;
+        }
+        .field {
+            margin-bottom: 10px;
+        }
+        .label {
+            display: block;
+            font-size: 14px;
+            color: var(--muted);
+            margin-bottom: 4px;
+        }
+        select, button {
+            width: 100%;
+            padding: 10px 12px;
+            border-radius: 8px;
+            border: 1px solid rgba(255,255,255,0.15);
+            background: rgba(255,255,255,0.05);
+            color: var(--text);
+            font-size: 15px;
+        }
+        select:focus, button:focus { outline: 2px solid var(--accent); outline-offset: 2px; }
+        .actions {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-top: 8px;
+        }
+        .exit {
+            margin-top: 10px;
+            background: rgba(255,80,80,0.1);
+            border-color: rgba(255,80,80,0.4);
+            color: #ffc4c4;
+        }
+        /* 提示 */
+        .hint {
+            position: absolute;
+            right: 12px;
+            top: 12px;
+            font-size: 12px;
+            color: var(--muted);
+            background: rgba(0,0,0,0.35);
+            padding: 6px 8px;
+            border-radius: 6px;
+        }
+    </style>
+</head>
+<body>
+    <div class="video-layer"></div>
+    <div class="grid"></div>
+    <div class="horizon"></div>
+
+    <div class="osd top-center glass-lite" id="signals"></div>
+    <div class="osd mode" id="mode"></div>
+    <div class="osd bottom-left glass-lite" id="gps"></div>
+    <div class="osd bottom-right glass-lite" id="video"></div>
+    <div class="osd mid-left glass-lite" id="battery"></div>
+    <div class="osd mid-right glass-lite" id="temps"></div>
+
+    <div class="menu" id="menu">
+        <div>
+            <h2>无线链路配置</h2>
+            <div class="hint">右键或 X 键切换菜单</div>
+        </div>
+        <div class="fields">
+            <div class="field"><span class="label">信道</span><select><option>44</option><option selected>58</option></select></div>
+            <div class="field"><span class="label">频宽</span><select><option>10 MHz</option><option selected>20 MHz</option></select></div>
+            <div class="field"><span class="label">天空端分辨率/刷新率</span><select><option selected>1920x1080 @ 60Hz</option><option>1280x720 @ 60Hz</option></select></div>
+            <div class="field"><span class="label">地面端分辨率/刷新率</span><select><option selected>1920x1080 @ 60Hz</option><option>1280x720 @ 60Hz</option></select></div>
+            <div class="field"><span class="label">码率(Mbps)</span><select><option>6</option><option selected>8</option><option>10</option></select></div>
+            <div class="field"><span class="label">天空端发射功率</span><select><option>10</option><option selected>20</option><option>30</option></select></div>
+            <div class="field"><span class="label">地面端发射功率</span><select><option>10</option><option selected>20</option><option>30</option></select></div>
+            <div class="field"><button>开启录象</button></div>
+        </div>
+        <div>
+            <div class="actions">
+                <button>确认</button>
+                <button>关闭</button>
+            </div>
+            <button class="exit">退出</button>
+        </div>
+    </div>
+
+    <script>
+        const menu = document.getElementById('menu');
+        let menuVisible = false;
+        const modes = ['HORIZON', 'ANGLE', 'ACRO', 'RTH'];
+
+        function iconRow(text) {
+            return `<div class="row"><div class="icon"></div><div>${text}</div></div>`;
+        }
+
+        function update() {
+            const t = Date.now() / 1000;
+            const sigA = Math.round(80 + 15 * Math.sin(t * 0.8));
+            const sigB = Math.round(78 + 18 * Math.cos(t * 0.65));
+            const sigRc = Math.round(90 + 8 * Math.sin(t * 1.1));
+            const mode = modes[Math.floor(t / 4) % modes.length];
+            const lat = 37.773 + 0.001 * Math.sin(t * 0.15);
+            const lon = -122.431 + 0.0015 * Math.cos(t * 0.12);
+            const alt = 120 + 12 * Math.sin(t * 0.35);
+            const home = 250 + 35 * Math.cos(t * 0.45);
+            const bitrate = (6 + 2 * Math.sin(t * 0.4)).toFixed(1);
+            const cell = (3.8 + 0.12 * Math.sin(t * 0.6)).toFixed(2);
+            const pack = (cell * 4 + 0.4 * Math.cos(t * 0.3)).toFixed(2);
+            const skyT = (45 + 5 * Math.sin(t * 0.22)).toFixed(1);
+            const gndT = (40 + 4 * Math.cos(t * 0.18)).toFixed(1);
+
+            document.getElementById('signals').innerHTML =
+                iconRow(`GND A: ${sigA}%  |  GND B: ${sigB}%  |  RC: ${sigRc}%`);
+            document.getElementById('mode').textContent = `Flight Mode: ${mode}`;
+            document.getElementById('gps').innerHTML =
+                iconRow(`GPS: ${lat.toFixed(5)}, ${lon.toFixed(5)}, ${alt.toFixed(1)}m`) +
+                iconRow(`离家距离: ${home.toFixed(1)}m`);
+            document.getElementById('video').innerHTML =
+                iconRow(`视频: ${bitrate} Mbps 1920x1080 @ 60Hz`);
+            document.getElementById('battery').innerHTML =
+                iconRow(`单节: ${cell}V`) +
+                iconRow(`总电: ${pack}V`);
+            document.getElementById('temps').innerHTML =
+                iconRow(`天空端温度: ${skyT}℃`) +
+                iconRow(`地面端温度: ${gndT}℃`);
+        }
+
+        setInterval(update, 100);
+        update();
+
+        document.addEventListener('contextmenu', e => {
+            e.preventDefault();
+            menuVisible = !menuVisible;
+            menu.classList.toggle('visible', menuVisible);
+        });
+        document.addEventListener('keydown', e => {
+            if (e.key.toLowerCase() === 'x') {
+                menuVisible = !menuVisible;
+                menu.classList.toggle('visible', menuVisible);
+            }
+        });
+    </script>
+</body>
+</html>

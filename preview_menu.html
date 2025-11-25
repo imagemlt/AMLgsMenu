@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>AML GS 菜单预览</title>
+    <style>
+        :root {
+            --bg: radial-gradient(120% 120% at 50% 45%, #0f1625 0%, #080c14 55%, #05070c 100%);
+            --panel: rgba(15, 22, 35, 0.75);
+            --panel-lite: rgba(15, 22, 35, 0.4);
+            --accent: #4fdcff;
+            --text: #e9eef7;
+            --muted: #9db0c6;
+        }
+        * { box-sizing: border-box; }
+        body, html {
+            margin: 0; padding: 0; width: 100%; height: 100%;
+            font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+            background: var(--bg);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--text);
+        }
+        .menu {
+            width: 50vw;
+            height: 50vh;
+            min-width: 520px;
+            min-height: 360px;
+            background: var(--panel);
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 14px;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 20px 60px rgba(0,0,0,0.45);
+            padding: 18px;
+            display: grid;
+            grid-template-rows: auto 1fr auto;
+            gap: 10px;
+        }
+        h2 {
+            margin: 0;
+            font-size: 18px;
+            letter-spacing: 0.5px;
+        }
+        .hint {
+            font-size: 12px;
+            color: var(--muted);
+            background: var(--panel-lite);
+            padding: 6px 8px;
+            border-radius: 6px;
+            display: inline-block;
+            margin-top: 6px;
+        }
+        .fields {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px 12px;
+            overflow: auto;
+            padding-right: 6px;
+        }
+        .field { display: flex; flex-direction: column; gap: 4px; }
+        .label { color: var(--muted); font-size: 14px; }
+        select, button {
+            width: 100%;
+            padding: 10px 12px;
+            border-radius: 8px;
+            border: 1px solid rgba(255,255,255,0.15);
+            background: rgba(255,255,255,0.05);
+            color: var(--text);
+            font-size: 15px;
+        }
+        select:focus, button:focus { outline: 2px solid var(--accent); outline-offset: 2px; }
+        .actions {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+        .exit {
+            margin-top: 8px;
+            background: rgba(255,80,80,0.08);
+            border-color: rgba(255,80,80,0.4);
+            color: #ffc4c4;
+        }
+    </style>
+</head>
+<body>
+    <div class="menu">
+        <div>
+            <h2>无线链路配置</h2>
+            <div class="hint">右键 / X 键切换菜单</div>
+        </div>
+        <div class="fields">
+            <div class="field"><span class="label">信道</span><select><option>44</option><option selected>58</option></select></div>
+            <div class="field"><span class="label">频宽</span><select><option>10 MHz</option><option selected>20 MHz</option><option>40 MHz</option></select></div>
+            <div class="field"><span class="label">天空端分辨率/刷新率</span><select><option selected>1920x1080 @ 60Hz</option><option>1280x720 @ 60Hz</option></select></div>
+            <div class="field"><span class="label">地面端分辨率/刷新率</span><select><option selected>1920x1080 @ 60Hz</option><option>1280x720 @ 60Hz</option></select></div>
+            <div class="field"><span class="label">码率(Mbps)</span><select><option>6</option><option selected>8</option><option>10</option></select></div>
+            <div class="field"><span class="label">天空端发射功率</span><select><option>10</option><option selected>20</option><option>30</option></select></div>
+            <div class="field"><span class="label">地面端发射功率</span><select><option>10</option><option selected>20</option><option>30</option></select></div>
+            <div class="field"><span class="label">&nbsp;</span><button>开启录象</button></div>
+        </div>
+        <div>
+            <div class="actions">
+                <button>确认</button>
+                <button>关闭</button>
+            </div>
+            <button class="exit">退出</button>
+        </div>
+    </div>
+</body>
+</html>

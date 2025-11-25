@@ -29,6 +29,10 @@ endif()
 # Define IMGUI_ROOT to point to your local checkout if needed
 set(IMGUI_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui" CACHE PATH "Dear ImGui root directory")
 
+if (NOT EXISTS "${IMGUI_ROOT}/imgui.h")
+    message(FATAL_ERROR "ImGui not found at ${IMGUI_ROOT}. Initialize submodule with `git submodule update --init --recursive` or set IMGUI_ROOT.")
+endif()
+
 set(IMGUI_SRC
     ${IMGUI_ROOT}/imgui.cpp
     ${IMGUI_ROOT}/imgui_demo.cpp

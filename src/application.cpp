@@ -10,7 +10,7 @@
 Application::Application() = default;
 Application::~Application() { Shutdown(); }
 
-bool Application::Initialize() {
+bool Application::Initialize(const std::string &font_path) {
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER) != 0) {
         SDL_Log("Failed to init SDL2: %s", SDL_GetError());
         return false;
@@ -21,6 +21,7 @@ bool Application::Initialize() {
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
+    SDL_GL_SetAttribute(SDL_GL_ALPHA_SIZE, 8);
 
     window_ = SDL_CreateWindow(
         "AML GS Menu",
@@ -45,7 +46,15 @@ bool Application::Initialize() {
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
+    ImGuiIO &io = ImGui::GetIO();
     ImGui::StyleColorsDark();
+
+    if (!font_path.empty()) {
+        ImFont *font = io.Fonts->AddFontFromFileTTF(font_path.c_str(), 18.0f);
+        if (!font) {
+            SDL_Log("Failed to load font at '%s', fallback to default font", font_path.c_str());
+        }
+    }
 
     ImGui_ImplSDL2_InitForOpenGL(window_, gl_context_);
     ImGui_ImplOpenGL3_Init("#version 100");
@@ -128,4 +137,3 @@ void Application::Shutdown() {
 SDL_GLContext Application::CreateGLContext(SDL_Window *window) {
     return SDL_GL_CreateContext(window);
 }
-
