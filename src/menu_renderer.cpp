@@ -371,7 +371,7 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag) {
             ImGui::TableSetColumnIndex(3);
             ImVec2 btn_sz(-1, 0);
             if (ImGui::Button("\u6253\u5f00 KODI", btn_sz)) {
-                std::system("bash -lc 'killall -9 AMLDigitalFPV; kodi-start'"); // launch Kodi and exit
+                std::system("bash -lc 'killall -9 AMLDigitalFPV || true; kodi-start'"); // launch Kodi and exit
                 running_flag = false;
             }
 
