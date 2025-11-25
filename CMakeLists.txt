@@ -64,6 +64,15 @@ endif()
 target_include_directories(AMLgsMenu PRIVATE ${LIBINPUT_INCLUDE_DIR})
 target_link_libraries(AMLgsMenu PRIVATE ${LIBINPUT_LIBRARY} ${UDEV_LIBRARY})
 
+# PNG for icon loading
+find_path(PNG_INCLUDE_DIR NAMES png.h)
+find_library(PNG_LIBRARY NAMES png16 png)
+if(NOT PNG_LIBRARY OR NOT PNG_INCLUDE_DIR)
+    message(FATAL_ERROR "libpng not found")
+endif()
+target_include_directories(AMLgsMenu PRIVATE ${PNG_INCLUDE_DIR})
+target_link_libraries(AMLgsMenu PRIVATE ${PNG_LIBRARY})
+
 # Basic warnings
 if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(AMLgsMenu PRIVATE -Wall -Wextra -Wpedantic)

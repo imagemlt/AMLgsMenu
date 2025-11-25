@@ -3,10 +3,12 @@
 #include "menu_state.h"
 
 #include "imgui.h"
+#include <vector>
 
 class MenuRenderer {
 public:
     explicit MenuRenderer(MenuState &state);
+    ~MenuRenderer();
 
     void Render(bool &running_flag);
     struct TelemetryData {
@@ -38,8 +40,14 @@ public:
 private:
     void DrawOsd(const ImGuiViewport *viewport, const TelemetryData &data) const;
     void DrawMenu(const ImGuiViewport *viewport, bool &running_flag);
+    bool LoadIcon(const char *path, ImTextureID &out_id, int &out_w, int &out_h);
 
     MenuState &state_;
     TelemetryData cached_telemetry_{};
     float last_osd_update_time_ = -1.0f;
+    ImTextureID icon_antenna_{};
+    ImTextureID icon_batt_cell_{};
+    ImTextureID icon_batt_pack_{};
+    ImTextureID icon_gps_{};
+    ImTextureID icon_monitor_{};
 };

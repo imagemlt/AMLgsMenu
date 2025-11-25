@@ -9,6 +9,9 @@
 #include <cmath>
 #include <sstream>
 #include <string>
+#include <vector>
+#include <png.h>
+#include <GLES2/gl2.h>
 
 static MenuRenderer::TelemetryData BuildMockTelemetry(const MenuState &state) {
     const float t = static_cast<float>(ImGui::GetTime());
@@ -54,7 +57,90 @@ static MenuRenderer::TelemetryData BuildMockTelemetry(const MenuState &state) {
     return data;
 }
 
-MenuRenderer::MenuRenderer(MenuState &state) : state_(state) {}
+MenuRenderer::MenuRenderer(MenuState &state) : state_(state) {
+    int w = 0, h = 0;
+    LoadIcon("icons/antenna.png", icon_antenna_, w, h);
+    LoadIcon("icons/battery_per.png", icon_batt_cell_, w, h);
+    LoadIcon("icons/battery_all.png", icon_batt_pack_, w, h);
+    LoadIcon("icons/gps.png", icon_gps_, w, h);
+    LoadIcon("icons/monitor.png", icon_monitor_, w, h);
+}
+bool MenuRenderer::LoadIcon(const char *path, ImTextureID &out_id, int &out_w, int &out_h) {
+    FILE *fp = std::fopen(path, "rb");
+    if (!fp) return false;
+    png_structp png_ptr = png_create_read_struct(PNG_LIBPNG_VER_STRING, nullptr, nullptr, nullptr);
+    if (!png_ptr) {
+        std::fclose(fp);
+        return false;
+    }
+    png_infop info_ptr = png_create_info_struct(png_ptr);
+    if (!info_ptr) {
+        png_destroy_read_struct(&png_ptr, nullptr, nullptr);
+        std::fclose(fp);
+        return false;
+    }
+    if (setjmp(png_jmpbuf(png_ptr))) {
+        png_destroy_read_struct(&png_ptr, &info_ptr, nullptr);
+        std::fclose(fp);
+        return false;
+    }
+    png_init_io(png_ptr, fp);
+    png_read_info(png_ptr, info_ptr);
+    png_uint_32 width = 0, height = 0;
+    int bit_depth = 0, color_type = 0;
+    png_get_IHDR(png_ptr, info_ptr, &width, &height, &bit_depth, &color_type, nullptr, nullptr, nullptr);
+
+    if (bit_depth == 16) png_set_strip_16(png_ptr);
+    if (color_type == PNG_COLOR_TYPE_PALETTE) png_set_palette_to_rgb(png_ptr);
+    if (color_type == PNG_COLOR_TYPE_GRAY && bit_depth < 8) png_set_expand_gray_1_2_4_to_8(png_ptr);
+    if (png_get_valid(png_ptr, info_ptr, PNG_INFO_tRNS)) png_set_tRNS_to_alpha(png_ptr);
+    if (color_type == PNG_COLOR_TYPE_RGB || color_type == PNG_COLOR_TYPE_GRAY || color_type == PNG_COLOR_TYPE_PALETTE)
+        png_set_filler(png_ptr, 0xFF, PNG_FILLER_AFTER);
+    if (color_type == PNG_COLOR_TYPE_GRAY || color_type == PNG_COLOR_TYPE_GRAY_ALPHA)
+        png_set_gray_to_rgb(png_ptr);
+
+    png_read_update_info(png_ptr, info_ptr);
+    std::vector<png_byte> data;
+    data.resize(png_get_rowbytes(png_ptr, info_ptr) * height);
+    std::vector<png_bytep> row_ptrs(height);
+    for (png_uint_32 y = 0; y < height; ++y) {
+        row_ptrs[y] = data.data() + y * png_get_rowbytes(png_ptr, info_ptr);
+    }
+    png_read_image(png_ptr, row_ptrs.data());
+    png_destroy_read_struct(&png_ptr, &info_ptr, nullptr);
+    std::fclose(fp);
+
+    GLuint tex = 0;
+    glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, static_cast<GLsizei>(width), static_cast<GLsizei>(height),
+                 0, GL_RGBA, GL_UNSIGNED_BYTE, data.data());
+    out_id = reinterpret_cast<ImTextureID>(static_cast<intptr_t>(tex));
+    out_w = static_cast<int>(width);
+    out_h = static_cast<int>(height);
+    return true;
+}
+MenuRenderer::~MenuRenderer() {
+    GLuint tex_ids[5]{};
+    int count = 0;
+    auto collect = [&](ImTextureID id) {
+        if (id) {
+            tex_ids[count++] = static_cast<GLuint>(reinterpret_cast<intptr_t>(id));
+        }
+    };
+    collect(icon_antenna_);
+    collect(icon_batt_cell_);
+    collect(icon_batt_pack_);
+    collect(icon_gps_);
+    collect(icon_monitor_);
+    if (count > 0) {
+        glDeleteTextures(count, tex_ids);
+    }
+}
 
 void MenuRenderer::Render(bool &running_flag) {
     const ImGuiViewport *viewport = ImGui::GetMainViewport();
@@ -83,11 +169,15 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
     const ImU32 text_outline = IM_COL32(0, 0, 0, 220);       // black edge
     const ImU32 text_fill = IM_COL32(255, 255, 255, 255);    // white body
 
-    auto draw_icon = [&](ImVec2 pos) {
-        ImU32 fill = IM_COL32(80, 120, 200, 180);
-        ImU32 border = IM_COL32(180, 210, 255, 220);
-        draw_list->AddRectFilled(pos, ImVec2(pos.x + icon_size, pos.y + icon_size), fill, 3.0f);
-        draw_list->AddRect(pos, ImVec2(pos.x + icon_size, pos.y + icon_size), border, 3.0f, 0, 1.5f);
+    auto draw_icon = [&](ImVec2 pos, ImTextureID tex) {
+        if (tex) {
+            draw_list->AddImage(tex, pos, ImVec2(pos.x + icon_size, pos.y + icon_size));
+        } else {
+            ImU32 fill = IM_COL32(80, 120, 200, 180);
+            ImU32 border = IM_COL32(180, 210, 255, 220);
+            draw_list->AddRectFilled(pos, ImVec2(pos.x + icon_size, pos.y + icon_size), fill, 3.0f);
+            draw_list->AddRect(pos, ImVec2(pos.x + icon_size, pos.y + icon_size), border, 3.0f, 0, 1.5f);
+        }
     };
 
     auto draw_horizon = [&](float roll_deg, float pitch_deg) {
@@ -115,10 +205,10 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
         draw_horizon(0.0f, 0.0f);
     }
 
-    auto draw_centered_text = [&](ImVec2 pos, const std::string &text, ImU32 color) {
+    auto draw_centered_text = [&](ImVec2 pos, const std::string &text, ImU32 color, ImTextureID tex) {
         ImVec2 size = ImGui::CalcTextSize(text.c_str());
         ImVec2 icon_pos(pos.x - size.x * 0.5f - icon_size - icon_gap, pos.y);
-        draw_icon(icon_pos);
+        draw_icon(icon_pos, tex);
         ImVec2 text_pos(icon_pos.x + icon_size + icon_gap, pos.y);
         // Shadow
         draw_list->AddText(ImVec2(text_pos.x + 1.2f, text_pos.y + 1.2f), text_outline, text.c_str());
@@ -140,7 +230,7 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
     }
     // Place signals near top center with a small margin
     draw_centered_text(ImVec2(center.x, viewport->Pos.y + viewport->Size.y * 0.05f),
-                       signal.str(), text_fill);
+                       signal.str(), text_fill, icon_antenna_);
 
     if (data.has_flight_mode) {
         draw_centered_text_no_icon(ImVec2(center.x, center.y - viewport->Size.y * 0.25f),
@@ -151,9 +241,9 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
                                      ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
                                      ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoBackground;
 
-    auto icon_text_line = [&](const char *text) {
+    auto icon_text_line = [&](const char *text, ImTextureID tex) {
         ImVec2 start = ImGui::GetCursorScreenPos();
-        draw_icon(start);
+        draw_icon(start, tex);
         ImGui::Dummy(ImVec2(icon_size + icon_gap, icon_size));
         ImGui::SameLine();
         ImGui::SetCursorScreenPos(ImVec2(start.x + icon_size + icon_gap, start.y));
@@ -168,10 +258,10 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
         char gps_buf[128];
         snprintf(gps_buf, sizeof(gps_buf), "GPS: %.5f, %.5f, %.1fm",
                  data.latitude, data.longitude, data.altitude_m);
-        icon_text_line(gps_buf);
+        icon_text_line(gps_buf, icon_gps_);
         char home_buf[64];
         snprintf(home_buf, sizeof(home_buf), "\u79bb\u5bb6\u8ddd\u79bb: %.1fm", data.home_distance_m);
-        icon_text_line(home_buf);
+        icon_text_line(home_buf, icon_gps_);
         ImGui::PopStyleColor();
     }
     ImGui::End();
@@ -185,7 +275,7 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
         char video_buf[128];
         snprintf(video_buf, sizeof(video_buf), "\u89c6\u9891: %.1f Mbps %s @ %dHz",
                  data.bitrate_mbps, data.video_resolution.c_str(), data.video_refresh_hz);
-        icon_text_line(video_buf);
+        icon_text_line(video_buf, icon_monitor_);
         ImGui::PopStyleColor();
     }
     ImGui::End();
@@ -196,10 +286,10 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
         ImGui::PushStyleColor(ImGuiCol_Text, text_fill);
         char cell_buf[32];
         snprintf(cell_buf, sizeof(cell_buf), "\u5355\u8282: %.2fV", data.cell_voltage);
-        icon_text_line(cell_buf);
+        icon_text_line(cell_buf, icon_batt_cell_);
         char pack_buf[32];
         snprintf(pack_buf, sizeof(pack_buf), "\u603b\u7535: %.2fV", data.pack_voltage);
-        icon_text_line(pack_buf);
+        icon_text_line(pack_buf, icon_batt_pack_);
         ImGui::PopStyleColor();
     }
     ImGui::End();
@@ -212,11 +302,11 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
         char sky_buf[32];
         snprintf(sky_buf, sizeof(sky_buf), "\u5929\u7a7a\u7aef\u6e29\u5ea6: %.1f\u2103", data.sky_temp_c);
         if (data.has_sky_temp) {
-            icon_text_line(sky_buf);
+            icon_text_line(sky_buf, icon_antenna_);
         }
         char ground_buf[32];
         snprintf(ground_buf, sizeof(ground_buf), "\u5730\u9762\u7aef\u6e29\u5ea6: %.1f\u2103", data.ground_temp_c);
-        icon_text_line(ground_buf);
+        icon_text_line(ground_buf, icon_antenna_);
         ImGui::PopStyleColor();
     }
     ImGui::End();
