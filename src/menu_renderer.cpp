@@ -229,103 +229,133 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag) {
         ImGui::Text("\u65e0\u7ebf\u94fe\u8def\u914d\u7f6e");
         ImGui::Separator();
 
-        const auto &channels = state_.Channels();
-        if (ImGui::BeginCombo("\u4fe1\u9053", std::to_string(channels[state_.ChannelIndex()]).c_str())) {
-            for (int i = 0; i < static_cast<int>(channels.size()); ++i) {
-                bool selected = (state_.ChannelIndex() == i);
-                if (ImGui::Selectable(std::to_string(channels[i]).c_str(), selected)) {
-                    state_.SetChannelIndex(i);
+        ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(10, 8));
+        if (ImGui::BeginTable("menu_table", 2, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoSavedSettings)) {
+            ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthStretch, 0.45f);
+            ImGui::TableSetupColumn("Ctrl", ImGuiTableColumnFlags_WidthStretch, 0.55f);
+
+            auto row_label = [](const char *text) {
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::TextUnformatted(text);
+                ImGui::TableSetColumnIndex(1);
+            };
+
+            const auto &channels = state_.Channels();
+            row_label("\u4fe1\u9053");
+            if (ImGui::BeginCombo("##channel", std::to_string(channels[state_.ChannelIndex()]).c_str())) {
+                for (int i = 0; i < static_cast<int>(channels.size()); ++i) {
+                    bool selected = (state_.ChannelIndex() == i);
+                    if (ImGui::Selectable(std::to_string(channels[i]).c_str(), selected)) {
+                        state_.SetChannelIndex(i);
+                    }
+                    if (selected) ImGui::SetItemDefaultFocus();
                 }
-                if (selected) ImGui::SetItemDefaultFocus();
+                ImGui::EndCombo();
             }
-            ImGui::EndCombo();
-        }
 
-        const auto &bandwidths = state_.Bandwidths();
-        if (ImGui::BeginCombo("\u9891\u5bbd", bandwidths[state_.BandwidthIndex()])) {
-            for (int i = 0; i < static_cast<int>(bandwidths.size()); ++i) {
-                bool selected = (state_.BandwidthIndex() == i);
-                if (ImGui::Selectable(bandwidths[i], selected)) {
-                    state_.SetBandwidthIndex(i);
+            const auto &bandwidths = state_.Bandwidths();
+            row_label("\u9891\u5bbd");
+            if (ImGui::BeginCombo("##bandwidth", bandwidths[state_.BandwidthIndex()])) {
+                for (int i = 0; i < static_cast<int>(bandwidths.size()); ++i) {
+                    bool selected = (state_.BandwidthIndex() == i);
+                    if (ImGui::Selectable(bandwidths[i], selected)) {
+                        state_.SetBandwidthIndex(i);
+                    }
+                    if (selected) ImGui::SetItemDefaultFocus();
                 }
-                if (selected) ImGui::SetItemDefaultFocus();
+                ImGui::EndCombo();
             }
-            ImGui::EndCombo();
-        }
 
-        const auto &sky_modes = state_.SkyModes();
-        if (!sky_modes.empty() && ImGui::BeginCombo("\u5929\u7a7a\u7aef\u5206\u8fa8\u7387/\u5237\u65b0\u7387", FormatVideoModeLabel(sky_modes[state_.SkyModeIndex()]).c_str())) {
-            for (int i = 0; i < static_cast<int>(sky_modes.size()); ++i) {
-                bool selected = (state_.SkyModeIndex() == i);
-                if (ImGui::Selectable(FormatVideoModeLabel(sky_modes[i]).c_str(), selected)) {
-                    state_.SetSkyModeIndex(i);
+            const auto &sky_modes = state_.SkyModes();
+            if (!sky_modes.empty()) {
+                row_label("\u5929\u7a7a\u7aef\u5206\u8fa8\u7387/\u5237\u65b0\u7387");
+                if (ImGui::BeginCombo("##sky_mode", FormatVideoModeLabel(sky_modes[state_.SkyModeIndex()]).c_str())) {
+                    for (int i = 0; i < static_cast<int>(sky_modes.size()); ++i) {
+                        bool selected = (state_.SkyModeIndex() == i);
+                        if (ImGui::Selectable(FormatVideoModeLabel(sky_modes[i]).c_str(), selected)) {
+                            state_.SetSkyModeIndex(i);
+                        }
+                        if (selected) ImGui::SetItemDefaultFocus();
+                    }
+                    ImGui::EndCombo();
                 }
-                if (selected) ImGui::SetItemDefaultFocus();
             }
-            ImGui::EndCombo();
-        }
 
-        const auto &ground_modes = state_.GroundModes();
-        if (!ground_modes.empty() && ImGui::BeginCombo("\u5730\u9762\u7aef\u5206\u8fa8\u7387/\u5237\u65b0\u7387", FormatVideoModeLabel(ground_modes[state_.GroundModeIndex()]).c_str())) {
-            for (int i = 0; i < static_cast<int>(ground_modes.size()); ++i) {
-                bool selected = (state_.GroundModeIndex() == i);
-                if (ImGui::Selectable(FormatVideoModeLabel(ground_modes[i]).c_str(), selected)) {
-                    state_.SetGroundModeIndex(i);
+            const auto &ground_modes = state_.GroundModes();
+            if (!ground_modes.empty()) {
+                row_label("\u5730\u9762\u7aef\u5206\u8fa8\u7387/\u5237\u65b0\u7387");
+                if (ImGui::BeginCombo("##ground_mode", FormatVideoModeLabel(ground_modes[state_.GroundModeIndex()]).c_str())) {
+                    for (int i = 0; i < static_cast<int>(ground_modes.size()); ++i) {
+                        bool selected = (state_.GroundModeIndex() == i);
+                        if (ImGui::Selectable(FormatVideoModeLabel(ground_modes[i]).c_str(), selected)) {
+                            state_.SetGroundModeIndex(i);
+                        }
+                        if (selected) ImGui::SetItemDefaultFocus();
+                    }
+                    ImGui::EndCombo();
                 }
-                if (selected) ImGui::SetItemDefaultFocus();
             }
-            ImGui::EndCombo();
-        }
 
-        const auto &bitrates = state_.Bitrates();
-        if (ImGui::BeginCombo("\u7801\u7387(Mbps)", std::to_string(bitrates[state_.BitrateIndex()]).c_str())) {
-            for (int i = 0; i < static_cast<int>(bitrates.size()); ++i) {
-                bool selected = (state_.BitrateIndex() == i);
-                if (ImGui::Selectable(std::to_string(bitrates[i]).c_str(), selected)) {
-                    state_.SetBitrateIndex(i);
+            const auto &bitrates = state_.Bitrates();
+            row_label("\u7801\u7387(Mbps)");
+            if (ImGui::BeginCombo("##bitrate", std::to_string(bitrates[state_.BitrateIndex()]).c_str())) {
+                for (int i = 0; i < static_cast<int>(bitrates.size()); ++i) {
+                    bool selected = (state_.BitrateIndex() == i);
+                    if (ImGui::Selectable(std::to_string(bitrates[i]).c_str(), selected)) {
+                        state_.SetBitrateIndex(i);
+                    }
+                    if (selected) ImGui::SetItemDefaultFocus();
                 }
-                if (selected) ImGui::SetItemDefaultFocus();
+                ImGui::EndCombo();
             }
-            ImGui::EndCombo();
-        }
 
-        const auto &powers = state_.PowerLevels();
-        if (ImGui::BeginCombo("\u5929\u7a7a\u7aef\u53d1\u5c04\u529f\u7387", std::to_string(powers[state_.SkyPowerIndex()]).c_str())) {
-            for (int i = 0; i < static_cast<int>(powers.size()); ++i) {
-                bool selected = (state_.SkyPowerIndex() == i);
-                if (ImGui::Selectable(std::to_string(powers[i]).c_str(), selected)) {
-                    state_.SetSkyPowerIndex(i);
+            const auto &powers = state_.PowerLevels();
+            row_label("\u5929\u7a7a\u7aef\u53d1\u5c04\u529f\u7387");
+            if (ImGui::BeginCombo("##sky_power", std::to_string(powers[state_.SkyPowerIndex()]).c_str())) {
+                for (int i = 0; i < static_cast<int>(powers.size()); ++i) {
+                    bool selected = (state_.SkyPowerIndex() == i);
+                    if (ImGui::Selectable(std::to_string(powers[i]).c_str(), selected)) {
+                        state_.SetSkyPowerIndex(i);
+                    }
+                    if (selected) ImGui::SetItemDefaultFocus();
                 }
-                if (selected) ImGui::SetItemDefaultFocus();
+                ImGui::EndCombo();
             }
-            ImGui::EndCombo();
-        }
 
-        if (ImGui::BeginCombo("\u5730\u9762\u7aef\u53d1\u5c04\u529f\u7387", std::to_string(powers[state_.GroundPowerIndex()]).c_str())) {
-            for (int i = 0; i < static_cast<int>(powers.size()); ++i) {
-                bool selected = (state_.GroundPowerIndex() == i);
-                if (ImGui::Selectable(std::to_string(powers[i]).c_str(), selected)) {
-                    state_.SetGroundPowerIndex(i);
+            row_label("\u5730\u9762\u7aef\u53d1\u5c04\u529f\u7387");
+            if (ImGui::BeginCombo("##ground_power", std::to_string(powers[state_.GroundPowerIndex()]).c_str())) {
+                for (int i = 0; i < static_cast<int>(powers.size()); ++i) {
+                    bool selected = (state_.GroundPowerIndex() == i);
+                    if (ImGui::Selectable(std::to_string(powers[i]).c_str(), selected)) {
+                        state_.SetGroundPowerIndex(i);
+                    }
+                    if (selected) ImGui::SetItemDefaultFocus();
                 }
-                if (selected) ImGui::SetItemDefaultFocus();
+                ImGui::EndCombo();
             }
-            ImGui::EndCombo();
-        }
 
-        if (ImGui::Button(state_.Recording() ? "\u505c\u6b62\u5f55\u50cf" : "\u5f00\u542f\u5f55\u50cf", ImVec2(-1, 0))) {
-            state_.ToggleRecording();
-        }
+            row_label("\u5f55\u50cf\u63a7\u5236");
+            if (ImGui::Button(state_.Recording() ? "\u505c\u6b62\u5f55\u50cf" : "\u5f00\u542f\u5f55\u50cf", ImVec2(-1, 0))) {
+                state_.ToggleRecording();
+            }
 
-        ImGui::Spacing();
-        ImGui::Columns(2, nullptr, false);
-        if (ImGui::Button("\u786e\u8ba4", ImVec2(-1, 0))) {
-            state_.ToggleMenuVisibility();
+            row_label(" ");
+            ImVec2 btn_size(-1, 0);
+            if (ImGui::Button("\u786e\u8ba4", btn_size)) {
+                state_.ToggleMenuVisibility();
+            }
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::TextUnformatted(" ");
+            ImGui::TableSetColumnIndex(1);
+            if (ImGui::Button("\u5173\u95ed", btn_size)) {
+                state_.ToggleMenuVisibility();
+            }
+
+            ImGui::EndTable();
         }
-        ImGui::NextColumn();
-        if (ImGui::Button("\u5173\u95ed", ImVec2(-1, 0))) {
-            state_.ToggleMenuVisibility();
-        }
-        ImGui::Columns(1);
+        ImGui::PopStyleVar();
 
     }
 
