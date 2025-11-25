@@ -70,8 +70,12 @@ find_library(PNG_LIBRARY NAMES png16 png)
 if(NOT PNG_LIBRARY OR NOT PNG_INCLUDE_DIR)
     message(FATAL_ERROR "libpng not found")
 endif()
+find_library(ZLIB_LIBRARY NAMES z)
+if(NOT ZLIB_LIBRARY)
+    message(FATAL_ERROR "zlib not found (needed by libpng)")
+endif()
 target_include_directories(AMLgsMenu PRIVATE ${PNG_INCLUDE_DIR})
-target_link_libraries(AMLgsMenu PRIVATE ${PNG_LIBRARY})
+target_link_libraries(AMLgsMenu PRIVATE ${PNG_LIBRARY} ${ZLIB_LIBRARY})
 
 # Basic warnings
 if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
