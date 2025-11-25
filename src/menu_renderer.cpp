@@ -347,11 +347,6 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag) {
         }
         ImGui::Columns(1);
 
-        ImGui::Spacing();
-        if (ImGui::Button("\u9000\u51fa", ImVec2(-1, 0))) {
-            state_.RequestExit();
-            running_flag = false;
-        }
     }
 
     ImGui::End();
