@@ -159,7 +159,7 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
     };
 
     ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + 16.0f,
-                                   viewport->Pos.y + viewport->Size.y - 64.0f));
+                                   viewport->Pos.y + viewport->Size.y - 140.0f));
     ImGui::SetNextWindowBgAlpha(0.0f);
     if (data.has_gps && ImGui::Begin("OSD_GPS", nullptr, overlay_flags)) {
         ImGui::PushStyleColor(ImGuiCol_Text, text_fill);
