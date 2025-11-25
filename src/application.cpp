@@ -409,12 +409,7 @@ int Application::FindGroundModeIndex(const std::string &label) const {
 }
 
 void Application::ApplyLanguageToImGui(MenuState::Language lang) {
-    ImGuiIO &io = ImGui::GetIO();
-    io.Fonts->Clear();
-    const float base_size = 26.0f;
-    // Keep using the same font path already loaded; rely on caller to rebuild atlas in Init if needed.
-    io.Fonts->AddFontDefault();
-    io.Fonts->Build();
+    // Font loading already follows -t 参数或默认字体，不在语言切换时重建，避免丢失用户指定字体。
     (void)lang;
 }
 
