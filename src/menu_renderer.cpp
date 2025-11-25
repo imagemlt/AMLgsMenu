@@ -227,9 +227,14 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag) {
     const ImVec2 menu_pos = ImVec2(viewport->Pos.x + viewport->Size.x * 0.25f,
                                    viewport->Pos.y + viewport->Size.y * 0.25f);
 
-    ImGui::SetNextWindowBgAlpha(0.25f);
+    ImGui::SetNextWindowBgAlpha(0.9f); // make menu opaque
     ImGui::SetNextWindowPos(menu_pos, ImGuiCond_Always);
     ImGui::SetNextWindowSize(menu_size, ImGuiCond_Always);
+
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 12.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 8.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 2.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
 
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse |
                              ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoTitleBar |
@@ -383,4 +388,5 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag) {
     }
 
     ImGui::End();
+    ImGui::PopStyleVar(4);
 }
