@@ -15,13 +15,31 @@ add_executable(aml_gs_menu
     src/video_mode.cpp
 )
 
-find_package(SDL2 REQUIRED)
+find_package(SDL2 QUIET)
+if(NOT TARGET SDL2::SDL2)
+    find_path(SDL2_INCLUDE_DIR SDL.h PATH_SUFFIXES SDL2)
+    find_library(SDL2_LIBRARY NAMES SDL2)
+    if(NOT SDL2_INCLUDE_DIR OR NOT SDL2_LIBRARY)
+        message(FATAL_ERROR "SDL2 not found: please provide SDL2::SDL2 target or set SDL2_INCLUDE_DIR/SDL2_LIBRARY")
+    endif()
+    add_library(SDL2::SDL2 UNKNOWN IMPORTED)
+    set_target_properties(SDL2::SDL2 PROPERTIES
+        IMPORTED_LOCATION "${SDL2_LIBRARY}"
+        INTERFACE_INCLUDE_DIRECTORIES "${SDL2_INCLUDE_DIR}")
+endif()
 target_link_libraries(aml_gs_menu PRIVATE SDL2::SDL2)
 
 if(AML_ENABLE_GLES)
     # OpenGL ES 2 is common on Amlogic platforms
-    find_package(OpenGL REQUIRED)
-    target_link_libraries(aml_gs_menu PRIVATE OpenGL::GLES2)
+    find_path(GLES2_INCLUDE_DIR NAMES GLES2/gl2.h)
+    find_library(GLESv2_LIBRARY NAMES GLESv2)
+    if(NOT GLESv2_LIBRARY)
+        message(FATAL_ERROR "GLESv2 not found")
+    endif()
+    if(GLES2_INCLUDE_DIR)
+        target_include_directories(aml_gs_menu PRIVATE ${GLES2_INCLUDE_DIR})
+    endif()
+    target_link_libraries(aml_gs_menu PRIVATE ${GLESv2_LIBRARY})
     target_compile_definitions(aml_gs_menu PRIVATE IMGUI_IMPL_OPENGL_ES2)
 endif()
 

@@ -2,6 +2,8 @@
 
 #include "menu_state.h"
 
+#include "imgui.h"
+
 class MenuRenderer {
 public:
     explicit MenuRenderer(MenuState &state);
