@@ -78,8 +78,8 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
 
     const float icon_size = 18.0f * 1.5f;
     const float icon_gap = 6.0f * 1.5f;
-    const ImU32 text_outline = IM_COL32(255, 255, 255, 220); // white edge
-    const ImU32 text_fill = IM_COL32(0, 0, 0, 255);          // black body
+    const ImU32 text_outline = IM_COL32(0, 0, 0, 220);       // black edge
+    const ImU32 text_fill = IM_COL32(255, 255, 255, 255);    // white body
 
     auto draw_icon = [&](ImVec2 pos) {
         ImU32 fill = IM_COL32(80, 120, 200, 180);
