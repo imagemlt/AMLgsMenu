@@ -10,6 +10,7 @@
 #include <libudev.h>
 
 #include <chrono>
+#include <unordered_map>
 #include <memory>
 #include <string>
 
@@ -37,6 +38,11 @@ private:
     void ProcessInput(bool &running);
     void HandleLibinputEvent(struct libinput_event *event, bool &running);
     void UpdateDeltaTime();
+    void LoadConfig();
+    void SaveConfigValue(const std::string &key, const std::string &value);
+    int FindChannelIndex(int channel_val) const;
+    int FindPowerIndex(int power_val) const;
+    int FindGroundModeIndex(const std::string &label) const;
 
     FbContext fb_{};
     EGLDisplay egl_display_ = EGL_NO_DISPLAY;
@@ -51,4 +57,7 @@ private:
 
     std::unique_ptr<MenuState> menu_state_;
     std::unique_ptr<MenuRenderer> renderer_;
+
+    std::unordered_map<std::string, std::string> config_kv_;
+    const std::string config_path_ = "/flash/wfb.conf";
 };

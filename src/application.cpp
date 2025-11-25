@@ -8,9 +8,11 @@
 #include <algorithm>
 #include <cstdio>
 #include <fcntl.h>
+#include <fstream>
 #include <linux/fb.h>
 #include <linux/input-event-codes.h>
 #include <poll.h>
+#include <sstream>
 #include <sys/ioctl.h>
 #include <unistd.h>
 
@@ -54,7 +56,28 @@ bool Application::Initialize(const std::string &font_path) {
     }
 
     menu_state_ = std::make_unique<MenuState>(sky_modes, ground_modes);
+    LoadConfig();
     renderer_ = std::make_unique<MenuRenderer>(*menu_state_);
+
+    menu_state_->SetOnChangeCallback([this](MenuState::SettingType type) {
+        switch (type) {
+        case MenuState::SettingType::Channel:
+            SaveConfigValue("channel", std::to_string(menu_state_->Channels()[menu_state_->ChannelIndex()]));
+            break;
+        case MenuState::SettingType::Bandwidth:
+            SaveConfigValue("bandwidth", std::to_string((menu_state_->BandwidthIndex() == 0) ? 10 :
+                                                        (menu_state_->BandwidthIndex() == 1) ? 20 : 40));
+            break;
+        case MenuState::SettingType::GroundMode:
+            SaveConfigValue("groud_res", menu_state_->GroundModes()[menu_state_->GroundModeIndex()].label);
+            break;
+        case MenuState::SettingType::GroundPower:
+            SaveConfigValue("driver_txpower_override", std::to_string(menu_state_->PowerLevels()[menu_state_->GroundPowerIndex()]));
+            break;
+        default:
+            break;
+        }
+    });
 
     running_ = true;
     initialized_ = true;
@@ -277,6 +300,88 @@ void Application::UpdateDeltaTime() {
     auto now = std::chrono::steady_clock::now();
     io.DeltaTime = std::chrono::duration<float>(now - last_frame_time_).count();
     last_frame_time_ = now;
+}
+
+void Application::LoadConfig() {
+    std::ifstream file(config_path_);
+    if (!file.is_open()) {
+        return;
+    }
+    std::string line;
+    while (std::getline(file, line)) {
+        if (line.empty() || line[0] == '#') continue;
+        auto pos = line.find('=');
+        if (pos == std::string::npos) continue;
+        std::string key = line.substr(0, pos);
+        std::string val = line.substr(pos + 1);
+        // trim spaces
+        key.erase(0, key.find_first_not_of(" \t"));
+        key.erase(key.find_last_not_of(" \t") + 1);
+        val.erase(0, val.find_first_not_of(" \t"));
+        val.erase(val.find_last_not_of(" \t\r\n") + 1);
+        config_kv_[key] = val;
+    }
+
+    auto it_ch = config_kv_.find("channel");
+    if (it_ch != config_kv_.end()) {
+        int ch = std::stoi(it_ch->second);
+        int idx = FindChannelIndex(ch);
+        if (idx >= 0) menu_state_->SetChannelIndex(idx);
+    }
+    auto it_bw = config_kv_.find("bandwidth");
+    if (it_bw != config_kv_.end()) {
+        int bw = std::stoi(it_bw->second);
+        if (bw == 10) menu_state_->SetBandwidthIndex(0);
+        else if (bw == 20) menu_state_->SetBandwidthIndex(1);
+        else if (bw == 40) menu_state_->SetBandwidthIndex(2);
+    }
+    auto it_power = config_kv_.find("driver_txpower_override");
+    if (it_power != config_kv_.end()) {
+        int p = std::stoi(it_power->second);
+        int idx = FindPowerIndex(p);
+        if (idx >= 0) {
+            menu_state_->SetGroundPowerIndex(idx);
+            menu_state_->SetSkyPowerIndex(idx);
+        }
+    }
+    auto it_res = config_kv_.find("groud_res");
+    if (it_res != config_kv_.end()) {
+        int idx = FindGroundModeIndex(it_res->second);
+        if (idx >= 0) menu_state_->SetGroundModeIndex(idx);
+    }
+}
+
+void Application::SaveConfigValue(const std::string &key, const std::string &value) {
+    config_kv_[key] = value;
+    std::ofstream file(config_path_, std::ios::trunc);
+    if (!file.is_open()) return;
+    for (const auto &kv : config_kv_) {
+        file << kv.first << "=" << kv.second << "\n";
+    }
+}
+
+int Application::FindChannelIndex(int channel_val) const {
+    const auto &chs = menu_state_->Channels();
+    for (size_t i = 0; i < chs.size(); ++i) {
+        if (chs[i] == channel_val) return static_cast<int>(i);
+    }
+    return -1;
+}
+
+int Application::FindPowerIndex(int power_val) const {
+    const auto &pwr = menu_state_->PowerLevels();
+    for (size_t i = 0; i < pwr.size(); ++i) {
+        if (pwr[i] == power_val) return static_cast<int>(i);
+    }
+    return -1;
+}
+
+int Application::FindGroundModeIndex(const std::string &label) const {
+    const auto &modes = menu_state_->GroundModes();
+    for (size_t i = 0; i < modes.size(); ++i) {
+        if (modes[i].label == label) return static_cast<int>(i);
+    }
+    return -1;
 }
 
 int Application::LibinputOpen(const char *path, int flags, void *user_data) {
