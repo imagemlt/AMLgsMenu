@@ -36,10 +36,17 @@ bool Application::Initialize(const std::string &font_path) {
     ImGuiIO &io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     ImGui::StyleColorsDark();
+    io.FontGlobalScale = 1.2f; // mild scale to enlarge text without huge atlas
     io.MouseDrawCursor = false;
 
+    ImFontConfig cfg;
+    cfg.SizePixels = 20.0f;         // modest base size
+    cfg.RasterizerMultiply = 1.25f; // slightly bolder strokes
+    cfg.PixelSnapH = true;          // crisper edges
     if (!font_path.empty()) {
-        io.Fonts->AddFontFromFileTTF(font_path.c_str(), 18.0f);
+        io.Fonts->AddFontFromFileTTF(font_path.c_str(), cfg.SizePixels, &cfg);
+    } else {
+        io.Fonts->AddFontDefault();
     }
 
     ImGui_ImplOpenGL3_Init("#version 100");
