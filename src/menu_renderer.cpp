@@ -133,7 +133,8 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
     if (data.has_rc_signal) {
         signal << "  |  RC: " << static_cast<int>(data.rc_signal) << " dBm";
     }
-    draw_centered_text(ImVec2(center.x, center.y - viewport->Size.y * 0.12f),
+    // Place signals near top center with a small margin
+    draw_centered_text(ImVec2(center.x, viewport->Pos.y + viewport->Size.y * 0.05f),
                        signal.str(), IM_COL32(255, 255, 255, 230));
 
     if (data.has_flight_mode) {
