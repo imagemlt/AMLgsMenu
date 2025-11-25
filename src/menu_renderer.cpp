@@ -184,7 +184,7 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
     };
 
     auto draw_horizon = [&](float roll_deg, float pitch_deg) {
-        const float line_half_len = viewport->Size.x * 0.25f;
+        const float line_half_len = viewport->Size.x * 0.25f * 0.66f; // shorten horizon line
         const float rad = roll_deg * 3.1415926f / 180.0f;
         const float cosr = std::cos(rad);
         const float sinr = std::sin(rad);
