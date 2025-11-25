@@ -9,8 +9,6 @@ public:
     explicit MenuRenderer(MenuState &state);
 
     void Render(bool &running_flag);
-
-private:
     struct TelemetryData {
         float ground_signal_a = 0.0f;
         float ground_signal_b = 0.0f;
@@ -37,6 +35,7 @@ private:
         float pitch_deg = 0.0f;
     };
 
+private:
     void DrawOsd(const ImGuiViewport *viewport, const TelemetryData &data) const;
     void DrawMenu(const ImGuiViewport *viewport, bool &running_flag);
 
