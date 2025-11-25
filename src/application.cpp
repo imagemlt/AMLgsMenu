@@ -38,8 +38,11 @@ bool Application::Initialize(const std::string &font_path) {
     ImGui::StyleColorsDark();
     io.MouseDrawCursor = false;
 
+    const float base_size = 26.0f; // larger base size for readability
     if (!font_path.empty()) {
-        io.Fonts->AddFontFromFileTTF(font_path.c_str(), 18.0f);
+        io.Fonts->AddFontFromFileTTF(font_path.c_str(), base_size);
+    } else {
+        io.Fonts->AddFontDefault();
     }
 
     ImGui_ImplOpenGL3_Init("#version 100");
