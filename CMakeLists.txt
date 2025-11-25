@@ -43,7 +43,6 @@ set(IMGUI_SRC
     ${IMGUI_ROOT}/imgui_draw.cpp
     ${IMGUI_ROOT}/imgui_tables.cpp
     ${IMGUI_ROOT}/imgui_widgets.cpp
-    ${IMGUI_ROOT}/backends/imgui_impl_sdl2.cpp
     ${IMGUI_ROOT}/backends/imgui_impl_opengl3.cpp
 )
 
