@@ -13,6 +13,11 @@ struct MenuRenderer::TelemetryData {
     float ground_signal_a = 0.0f;
     float ground_signal_b = 0.0f;
     float rc_signal = 0.0f;
+    bool has_rc_signal = true;
+    bool has_flight_mode = true;
+    bool has_gps = true;
+    bool has_battery = true;
+    bool has_sky_temp = true;
     std::string flight_mode;
     double latitude = 0.0;
     double longitude = 0.0;
@@ -35,6 +40,11 @@ static MenuRenderer::TelemetryData BuildMockTelemetry(const MenuState &state) {
     data.ground_signal_a = -60.0f + 5.0f * std::sin(t * 0.8f);
     data.ground_signal_b = -62.0f + 6.0f * std::cos(t * 0.65f);
     data.rc_signal = -55.0f + 4.0f * std::sin(t * 1.1f);
+    data.has_rc_signal = true;
+    data.has_flight_mode = true;
+    data.has_gps = true;
+    data.has_battery = true;
+    data.has_sky_temp = true;
 
     const char *modes[] = {"HORIZON", "ANGLE", "ACRO", "RTH"};
     data.flight_mode = modes[static_cast<int>(t / 4.0f) % 4];
@@ -116,17 +126,21 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
 
     std::ostringstream signal;
     signal << "GND A: " << static_cast<int>(data.ground_signal_a) << " dBm  |  "
-           << "GND B: " << static_cast<int>(data.ground_signal_b) << " dBm  |  "
-           << "RC: " << static_cast<int>(data.rc_signal) << " dBm";
+           << "GND B: " << static_cast<int>(data.ground_signal_b) << " dBm";
+    if (data.has_rc_signal) {
+        signal << "  |  RC: " << static_cast<int>(data.rc_signal) << " dBm";
+    }
     draw_centered_text(ImVec2(center.x, center.y - viewport->Size.y * 0.12f),
                        signal.str(), IM_COL32(255, 255, 255, 230));
 
-    draw_centered_text_no_icon(ImVec2(center.x, center.y - viewport->Size.y * 0.25f),
-                               "Flight Mode: " + data.flight_mode, IM_COL32(0, 200, 255, 255));
+    if (data.has_flight_mode) {
+        draw_centered_text_no_icon(ImVec2(center.x, center.y - viewport->Size.y * 0.25f),
+                                   "Flight Mode: " + data.flight_mode, IM_COL32(0, 200, 255, 255));
+    }
 
     ImGuiWindowFlags overlay_flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
                                      ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
-                                     ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoInputs;
+                                     ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoBackground;
 
     auto icon_text_line = [&](const char *text) {
         ImVec2 start = ImGui::GetCursorScreenPos();
@@ -140,8 +154,8 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
 
     ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + 16.0f,
                                    viewport->Pos.y + viewport->Size.y - 64.0f));
-    ImGui::SetNextWindowBgAlpha(0.35f);
-    if (ImGui::Begin("OSD_GPS", nullptr, overlay_flags)) {
+    ImGui::SetNextWindowBgAlpha(0.0f);
+    if (data.has_gps && ImGui::Begin("OSD_GPS", nullptr, overlay_flags)) {
         char gps_buf[128];
         snprintf(gps_buf, sizeof(gps_buf), "GPS: %.5f, %.5f, %.1fm",
                  data.latitude, data.longitude, data.altitude_m);
@@ -155,7 +169,7 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
     ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + viewport->Size.x - 16.0f,
                                    viewport->Pos.y + viewport->Size.y - 48.0f),
                             ImGuiCond_Always, ImVec2(1.0f, 1.0f));
-    ImGui::SetNextWindowBgAlpha(0.35f);
+    ImGui::SetNextWindowBgAlpha(0.0f);
     if (ImGui::Begin("OSD_VIDEO", nullptr, overlay_flags)) {
         char video_buf[128];
         snprintf(video_buf, sizeof(video_buf), "\u89c6\u9891: %.1f Mbps %s @ %dHz",
@@ -165,8 +179,8 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
     ImGui::End();
 
     ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + 16.0f, center.y - 24.0f));
-    ImGui::SetNextWindowBgAlpha(0.35f);
-    if (ImGui::Begin("OSD_BATT", nullptr, overlay_flags)) {
+    ImGui::SetNextWindowBgAlpha(0.0f);
+    if (data.has_battery && ImGui::Begin("OSD_BATT", nullptr, overlay_flags)) {
         char cell_buf[32];
         snprintf(cell_buf, sizeof(cell_buf), "\u5355\u8282: %.2fV", data.cell_voltage);
         icon_text_line(cell_buf);
@@ -178,11 +192,13 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
 
     ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + viewport->Size.x - 16.0f, center.y - 24.0f),
                             ImGuiCond_Always, ImVec2(1.0f, 0.5f));
-    ImGui::SetNextWindowBgAlpha(0.35f);
+    ImGui::SetNextWindowBgAlpha(0.0f);
     if (ImGui::Begin("OSD_TEMP", nullptr, overlay_flags)) {
         char sky_buf[32];
         snprintf(sky_buf, sizeof(sky_buf), "\u5929\u7a7a\u7aef\u6e29\u5ea6: %.1f\u2103", data.sky_temp_c);
-        icon_text_line(sky_buf);
+        if (data.has_sky_temp) {
+            icon_text_line(sky_buf);
+        }
         char ground_buf[32];
         snprintf(ground_buf, sizeof(ground_buf), "\u5730\u9762\u7aef\u6e29\u5ea6: %.1f\u2103", data.ground_temp_c);
         icon_text_line(ground_buf);
