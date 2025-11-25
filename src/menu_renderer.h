@@ -9,10 +9,9 @@ public:
     explicit MenuRenderer(MenuState &state);
 
     void Render(bool &running_flag);
-
-private:
     struct TelemetryData;
 
+private:
     void DrawOsd(const ImGuiViewport *viewport, const TelemetryData &data) const;
     void DrawMenu(const ImGuiViewport *viewport, bool &running_flag);
 

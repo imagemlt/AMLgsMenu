@@ -98,7 +98,6 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
 
     const float icon_size = 18.0f;
     const float icon_gap = 6.0f;
-    const ImU32 text_color = IM_COL32(255, 255, 255, 255);
     const ImU32 text_shadow = IM_COL32(0, 0, 0, 180);
 
     auto draw_icon = [&](ImVec2 pos) {
@@ -170,7 +169,6 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
 
     auto icon_text_line = [&](const char *text) {
         ImVec2 start = ImGui::GetCursorScreenPos();
-        ImDrawList *win_list = ImGui::GetWindowDrawList();
         draw_icon(start);
         ImGui::Dummy(ImVec2(icon_size + icon_gap, icon_size));
         ImGui::SameLine();
@@ -233,6 +231,7 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
 }
 
 void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag) {
+    (void)running_flag;
     const ImVec2 menu_size = ImVec2(viewport->Size.x * 0.5f, viewport->Size.y * 0.5f);
     const ImVec2 menu_pos = ImVec2(viewport->Pos.x + viewport->Size.x * 0.25f,
                                    viewport->Pos.y + viewport->Size.y * 0.25f);
