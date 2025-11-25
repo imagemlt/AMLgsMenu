@@ -246,7 +246,8 @@ void Application::HandleLibinputEvent(struct libinput_event *event, bool &runnin
         auto *a = libinput_event_get_pointer_event(event);
         if (libinput_event_pointer_has_axis(a, LIBINPUT_POINTER_AXIS_SCROLL_VERTICAL)) {
             double v = libinput_event_pointer_get_axis_value(a, LIBINPUT_POINTER_AXIS_SCROLL_VERTICAL);
-            io.MouseWheel += static_cast<float>(-v);
+            const float kScrollScale = 0.35f; // slow down scroll for combos
+            io.MouseWheel += static_cast<float>(-v) * kScrollScale;
         }
         break;
     }
