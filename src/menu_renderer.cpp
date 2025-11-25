@@ -237,7 +237,7 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
 
     if (data.has_flight_mode) {
         ImFont *font = ImGui::GetFont();
-        float base = font ? font->FontSize : ImGui::GetFontSize();
+        float base = ImGui::GetFontSize();
         float mode_size = base * 1.5f; // enlarge flight mode text
         ImU32 mode_fill = IM_COL32(220, 245, 255, 255);   // light for sky background
         ImU32 mode_outline = IM_COL32(0, 40, 80, 220);    // dark outline for contrast
