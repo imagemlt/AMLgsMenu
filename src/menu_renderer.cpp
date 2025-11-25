@@ -32,9 +32,9 @@ static MenuRenderer::TelemetryData BuildMockTelemetry(const MenuState &state) {
 
     MenuRenderer::TelemetryData data{};
 
-    data.ground_signal_a = std::clamp(80.0f + 15.0f * std::sin(t * 0.8f), 0.0f, 100.0f);
-    data.ground_signal_b = std::clamp(78.0f + 18.0f * std::cos(t * 0.65f), 0.0f, 100.0f);
-    data.rc_signal = std::clamp(90.0f + 8.0f * std::sin(t * 1.1f), 0.0f, 100.0f);
+    data.ground_signal_a = -60.0f + 5.0f * std::sin(t * 0.8f);
+    data.ground_signal_b = -62.0f + 6.0f * std::cos(t * 0.65f);
+    data.rc_signal = -55.0f + 4.0f * std::sin(t * 1.1f);
 
     const char *modes[] = {"HORIZON", "ANGLE", "ACRO", "RTH"};
     data.flight_mode = modes[static_cast<int>(t / 4.0f) % 4];
@@ -109,9 +109,9 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
     };
 
     std::ostringstream signal;
-    signal << "GND A: " << static_cast<int>(data.ground_signal_a) << "%  |  "
-           << "GND B: " << static_cast<int>(data.ground_signal_b) << "%  |  "
-           << "RC: " << static_cast<int>(data.rc_signal) << "%";
+    signal << "GND A: " << static_cast<int>(data.ground_signal_a) << " dBm  |  "
+           << "GND B: " << static_cast<int>(data.ground_signal_b) << " dBm  |  "
+           << "RC: " << static_cast<int>(data.rc_signal) << " dBm";
     draw_centered_text(ImVec2(center.x, center.y - viewport->Size.y * 0.12f),
                        signal.str(), IM_COL32(255, 255, 255, 230));
 
