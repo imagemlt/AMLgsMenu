@@ -15,6 +15,7 @@ struct MenuRenderer::TelemetryData {
     float rc_signal = 0.0f;
     bool has_rc_signal = true;
     bool has_flight_mode = true;
+    bool has_attitude = true;
     bool has_gps = true;
     bool has_battery = true;
     bool has_sky_temp = true;
@@ -30,6 +31,8 @@ struct MenuRenderer::TelemetryData {
     float pack_voltage = 0.0f;
     float sky_temp_c = 0.0f;
     float ground_temp_c = 0.0f;
+    float roll_deg = 0.0f;
+    float pitch_deg = 0.0f;
 };
 
 static MenuRenderer::TelemetryData BuildMockTelemetry(const MenuState &state) {
@@ -42,6 +45,7 @@ static MenuRenderer::TelemetryData BuildMockTelemetry(const MenuState &state) {
     data.rc_signal = -55.0f + 4.0f * std::sin(t * 1.1f);
     data.has_rc_signal = true;
     data.has_flight_mode = true;
+    data.has_attitude = true;
     data.has_gps = true;
     data.has_battery = true;
     data.has_sky_temp = true;
@@ -68,6 +72,8 @@ static MenuRenderer::TelemetryData BuildMockTelemetry(const MenuState &state) {
 
     data.sky_temp_c = 45.0f + 5.0f * std::sin(t * 0.22f);
     data.ground_temp_c = 40.0f + 4.0f * std::cos(t * 0.18f);
+    data.roll_deg = 10.0f * std::sin(t * 0.6f);
+    data.pitch_deg = 5.0f * std::cos(t * 0.5f);
 
     return data;
 }
@@ -102,10 +108,30 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
         draw_list->AddRect(pos, ImVec2(pos.x + icon_size, pos.y + icon_size), border, 3.0f, 0, 1.5f);
     };
 
-    const float line_half_len = viewport->Size.x * 0.25f;
-    draw_list->AddLine(ImVec2(center.x - line_half_len, center.y),
-                       ImVec2(center.x + line_half_len, center.y),
-                       IM_COL32(255, 255, 255, 255), 2.0f);
+    auto draw_horizon = [&](float roll_deg, float pitch_deg) {
+        const float line_half_len = viewport->Size.x * 0.25f;
+        const float rad = roll_deg * 3.1415926f / 180.0f;
+        const float cosr = std::cos(rad);
+        const float sinr = std::sin(rad);
+        ImVec2 left(-line_half_len, 0.0f);
+        ImVec2 right(line_half_len, 0.0f);
+        auto rotate = [&](const ImVec2 &p) {
+            return ImVec2(p.x * cosr - p.y * sinr, p.x * sinr + p.y * cosr);
+        };
+        const float pitch_offset = pitch_deg * 4.0f; // pixels per degree, tweak as needed
+        ImVec2 p1 = rotate(left);
+        ImVec2 p2 = rotate(right);
+        p1.x += center.x;
+        p2.x += center.x;
+        p1.y += center.y + pitch_offset;
+        p2.y += center.y + pitch_offset;
+        draw_list->AddLine(p1, p2, IM_COL32(255, 255, 255, 255), 2.0f);
+    };
+    if (data.has_attitude) {
+        draw_horizon(data.roll_deg, data.pitch_deg);
+    } else {
+        draw_horizon(0.0f, 0.0f);
+    }
 
     auto draw_centered_text = [&](ImVec2 pos, const std::string &text, ImU32 color) {
         ImVec2 size = ImGui::CalcTextSize(text.c_str());
