@@ -47,6 +47,8 @@ bool Application::Initialize(const std::string &font_path) {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO &io = ImGui::GetIO();
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
     ImGui::StyleColorsDark();
 
     if (!font_path.empty()) {
@@ -58,6 +60,17 @@ bool Application::Initialize(const std::string &font_path) {
 
     ImGui_ImplSDL2_InitForOpenGL(window_, gl_context_);
     ImGui_ImplOpenGL3_Init("#version 100");
+
+    // Open first available game controller for navigation
+    for (int i = 0; i < SDL_NumJoysticks(); ++i) {
+        if (SDL_IsGameController(i)) {
+            controller_ = SDL_GameControllerOpen(i);
+            if (controller_) {
+                SDL_Log("Opened game controller: %s", SDL_GameControllerName(controller_));
+            }
+            break;
+        }
+    }
 
     auto sky_modes = DefaultSkyModes();
     auto ground_modes = LoadHdmiModes("/sys/class/amhdmitx/amhdmitx0/modes");
@@ -124,6 +137,11 @@ void Application::Shutdown() {
     if (gl_context_) {
         SDL_GL_DeleteContext(gl_context_);
         gl_context_ = nullptr;
+    }
+
+    if (controller_) {
+        SDL_GameControllerClose(controller_);
+        controller_ = nullptr;
     }
 
     if (window_) {

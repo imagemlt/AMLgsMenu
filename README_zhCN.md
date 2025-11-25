@@ -25,6 +25,20 @@ cmake -S . -B build -DAML_ENABLE_GLES=ON
 cmake --build build
 ```
 
+### 交叉编译
+- 使用厂商/工具链提供的 `toolchain.cmake` 和包含 GLES/EGL、SDL2 的 sysroot（如 Amlogic SDK 或 CoreELEC 输出）。
+- 示例：
+  ```bash
+  cmake -S . -B build-aarch64 \
+    -DCMAKE_TOOLCHAIN_FILE=/opt/toolchains/aarch64-linux-gnu.toolchain.cmake \
+    -DCMAKE_SYSROOT=/opt/sysroots/aarch64 \
+    -DSDL2_DIR=$CMAKE_SYSROOT/usr/lib/cmake/SDL2 \
+    -DIMGUI_ROOT=$(pwd)/third_party/imgui \
+    -DAML_ENABLE_GLES=ON
+  cmake --build build-aarch64
+  ```
+- 如果 sysroot 中没有 SDL2 的 CMake config，可改为设置 `SDL2_INCLUDE_DIR` 和 `SDL2_LIBRARY` 指向 sysroot 内路径；确保 GLES/EGL 库也在 sysroot 中并可被 CMake 找到。
+
 ## 模拟遥测/OSD 数据
 - 所有演示数据集中在 `src/menu_renderer.cpp` 的 `BuildMockTelemetry`；渲染逻辑在 `DrawOsd`。用真实数据时，替换/移除 `BuildMockTelemetry` 并传入实际遥测。
 - 水平线、信号/温度/电池/GPS/视频位置和透明度可在 `DrawOsd` 调整。

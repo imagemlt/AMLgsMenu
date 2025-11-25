@@ -29,6 +29,20 @@ cmake -S . -B build \
 cmake --build build
 ```
 
+### Cross-compiling
+- Use the vendor/toolchain-provided `toolchain.cmake` and sysroot that include GLES/EGL and SDL2 for your target (e.g., Amlogic board SDK or CoreELEC build output).
+- Example:
+  ```bash
+  cmake -S . -B build-aarch64 \
+    -DCMAKE_TOOLCHAIN_FILE=/opt/toolchains/aarch64-linux-gnu.toolchain.cmake \
+    -DCMAKE_SYSROOT=/opt/sysroots/aarch64 \
+    -DSDL2_DIR=$CMAKE_SYSROOT/usr/lib/cmake/SDL2 \
+    -DIMGUI_ROOT=$(pwd)/third_party/imgui \
+    -DAML_ENABLE_GLES=ON
+  cmake --build build-aarch64
+  ```
+- If SDL2 has no CMake config in the sysroot, set `SDL2_INCLUDE_DIR` and `SDL2_LIBRARY` to the paths inside your sysroot. Ensure GLES/EGL libraries are also present in the sysroot and discoverable by CMake.
+
 ## Running
 From the build directory:
 ```bash

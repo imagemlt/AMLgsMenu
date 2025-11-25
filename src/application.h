@@ -21,6 +21,7 @@ private:
 
     SDL_Window *window_ = nullptr;
     SDL_GLContext gl_context_ = nullptr;
+    SDL_GameController *controller_ = nullptr;
     bool running_ = false;
     bool initialized_ = false;
 
