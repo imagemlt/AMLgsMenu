@@ -40,3 +40,5 @@ The application opens a full-screen window. Toggle the menu with a right-click o
 ## Notes
 - The prototype focuses on UI rendering; selecting values does not yet apply system-level configuration.
 - On platforms without HDMI mode exposure, the ground resolution list falls back to the bundled defaults.
+- Development currently tracks the `main` branch; pull the latest `main` tip before building to ensure code and build files are
+  in sync.
