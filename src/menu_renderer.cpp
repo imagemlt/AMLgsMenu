@@ -64,6 +64,8 @@ void MenuRenderer::Render(bool &running_flag) {
 
     DrawOsd(viewport, cached_telemetry_);
 
+    ImGuiIO &io = ImGui::GetIO();
+    io.MouseDrawCursor = state_.MenuVisible();
     if (state_.MenuVisible()) {
         DrawMenu(viewport, running_flag);
     }

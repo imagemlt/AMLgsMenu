@@ -36,7 +36,7 @@ bool Application::Initialize(const std::string &font_path) {
     ImGuiIO &io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     ImGui::StyleColorsDark();
-    io.MouseDrawCursor = true;
+    io.MouseDrawCursor = false;
 
     if (!font_path.empty()) {
         io.Fonts->AddFontFromFileTTF(font_path.c_str(), 18.0f);
