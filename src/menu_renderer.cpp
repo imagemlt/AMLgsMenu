@@ -4,6 +4,7 @@
 #include "video_mode.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <cstdio>
 #include <cmath>
 #include <sstream>
@@ -363,21 +364,25 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag) {
                          }
                      });
 
-            // bottom rows: confirm on its own row, then close below it
+            // bottom rows: Kodi launch, then confirm/close on separate row
             ImGui::TableNextRow();
             ImGui::TableSetColumnIndex(2);
             ImGui::TextUnformatted(" ");
             ImGui::TableSetColumnIndex(3);
             ImVec2 btn_sz(-1, 0);
-            if (ImGui::Button("\u786e\u8ba4", btn_sz)) {
-                state_.ToggleMenuVisibility();
+            if (ImGui::Button("\u6253\u5f00 KODI", btn_sz)) {
+                std::system("bash -lc 'killall -9 AMLDigitalFPV; kodi-start'"); // launch Kodi and exit
+                running_flag = false;
             }
 
             ImGui::TableNextRow();
             ImGui::TableSetColumnIndex(2);
             ImGui::TextUnformatted(" ");
             ImGui::TableSetColumnIndex(3);
-            ImGui::Dummy(ImVec2(0, 6)); // small vertical gap
+            if (ImGui::Button("\u786e\u8ba4", btn_sz)) {
+                state_.ToggleMenuVisibility();
+            }
+            ImGui::SameLine(0.0f, 12.0f);
             if (ImGui::Button("\u5173\u95ed", btn_sz)) {
                 state_.ToggleMenuVisibility();
             }
