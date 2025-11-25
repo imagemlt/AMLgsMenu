@@ -6,6 +6,7 @@
 
 #include <EGL/egl.h>
 #include <algorithm>
+#include <cstdio>
 #include <fcntl.h>
 #include <linux/fb.h>
 #include <linux/input-event-codes.h>
@@ -18,12 +19,15 @@ Application::~Application() { Shutdown(); }
 
 bool Application::Initialize(const std::string &font_path) {
     if (!InitFramebuffer(fb_)) {
+        std::fprintf(stderr, "[AMLgsMenu] Failed to init framebuffer (/dev/fb0)\n");
         return false;
     }
     if (!InitEgl(fb_)) {
+        std::fprintf(stderr, "[AMLgsMenu] Failed to init EGL/GLES\n");
         return false;
     }
     if (!InitInput()) {
+        std::fprintf(stderr, "[AMLgsMenu] Failed to init libinput/udev\n");
         return false;
     }
 
@@ -120,10 +124,12 @@ void Application::Shutdown() {
 bool Application::InitFramebuffer(FbContext &fb) {
     fb.fd = open("/dev/fb0", O_RDWR);
     if (fb.fd < 0) {
+        std::perror("[AMLgsMenu] open(/dev/fb0)");
         return false;
     }
     fb_var_screeninfo vinfo{};
     if (ioctl(fb.fd, FBIOGET_VSCREENINFO, &vinfo) != 0) {
+        std::perror("[AMLgsMenu] ioctl(FBIOGET_VSCREENINFO)");
         return false;
     }
     fb.width = static_cast<int>(vinfo.xres);
@@ -145,29 +151,52 @@ bool Application::InitEgl(const FbContext &fb) {
         EGL_NONE};
 
     egl_display_ = eglGetDisplay(EGL_DEFAULT_DISPLAY);
-    if (egl_display_ == EGL_NO_DISPLAY) return false;
-    if (!eglInitialize(egl_display_, &major, &minor)) return false;
+    if (egl_display_ == EGL_NO_DISPLAY) {
+        std::fprintf(stderr, "[AMLgsMenu] eglGetDisplay failed\n");
+        return false;
+    }
+    if (!eglInitialize(egl_display_, &major, &minor)) {
+        std::fprintf(stderr, "[AMLgsMenu] eglInitialize failed\n");
+        return false;
+    }
     if (!eglChooseConfig(egl_display_, attr, &egl_config_, 1, &num_configs) || num_configs == 0) {
+        std::fprintf(stderr, "[AMLgsMenu] eglChooseConfig failed\n");
         return false;
     }
     EGLint ctx_attr[] = {EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE};
     egl_context_ = eglCreateContext(egl_display_, egl_config_, EGL_NO_CONTEXT, ctx_attr);
-    if (egl_context_ == EGL_NO_CONTEXT) return false;
+    if (egl_context_ == EGL_NO_CONTEXT) {
+        std::fprintf(stderr, "[AMLgsMenu] eglCreateContext failed\n");
+        return false;
+    }
 
     fbdev_window native_window{fb.width, fb.height};
     egl_surface_ = eglCreateWindowSurface(egl_display_, egl_config_, &native_window, nullptr);
-    if (egl_surface_ == EGL_NO_SURFACE) return false;
-    if (!eglMakeCurrent(egl_display_, egl_surface_, egl_surface_, egl_context_)) return false;
+    if (egl_surface_ == EGL_NO_SURFACE) {
+        std::fprintf(stderr, "[AMLgsMenu] eglCreateWindowSurface failed\n");
+        return false;
+    }
+    if (!eglMakeCurrent(egl_display_, egl_surface_, egl_surface_, egl_context_)) {
+        std::fprintf(stderr, "[AMLgsMenu] eglMakeCurrent failed\n");
+        return false;
+    }
     eglSwapInterval(egl_display_, 1);
     return true;
 }
 
 bool Application::InitInput() {
     udev_ctx_ = udev_new();
-    if (!udev_ctx_) return false;
+    if (!udev_ctx_) {
+        std::fprintf(stderr, "[AMLgsMenu] udev_new failed\n");
+        return false;
+    }
     li_ctx_ = libinput_udev_create_context(nullptr, nullptr, udev_ctx_);
-    if (!li_ctx_) return false;
+    if (!li_ctx_) {
+        std::fprintf(stderr, "[AMLgsMenu] libinput_udev_create_context failed\n");
+        return false;
+    }
     if (libinput_udev_assign_seat(li_ctx_, "seat0") != 0) {
+        std::fprintf(stderr, "[AMLgsMenu] libinput_udev_assign_seat failed\n");
         return false;
     }
     return true;
