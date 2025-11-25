@@ -190,7 +190,11 @@ bool Application::InitInput() {
         std::fprintf(stderr, "[AMLgsMenu] udev_new failed\n");
         return false;
     }
-    li_ctx_ = libinput_udev_create_context(nullptr, nullptr, udev_ctx_);
+    static const libinput_interface iface = {
+        &Application::LibinputOpen,
+        &Application::LibinputClose,
+    };
+    li_ctx_ = libinput_udev_create_context(&iface, nullptr, udev_ctx_);
     if (!li_ctx_) {
         std::fprintf(stderr, "[AMLgsMenu] libinput_udev_create_context failed\n");
         return false;
@@ -268,4 +272,16 @@ void Application::UpdateDeltaTime() {
     auto now = std::chrono::steady_clock::now();
     io.DeltaTime = std::chrono::duration<float>(now - last_frame_time_).count();
     last_frame_time_ = now;
+}
+
+int Application::LibinputOpen(const char *path, int flags, void *user_data) {
+    (void)user_data;
+    return open(path, flags | O_NONBLOCK);
+}
+
+void Application::LibinputClose(int fd, void *user_data) {
+    (void)user_data;
+    if (fd >= 0) {
+        close(fd);
+    }
 }

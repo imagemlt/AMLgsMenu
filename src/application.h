@@ -32,6 +32,8 @@ private:
     bool InitFramebuffer(FbContext &fb);
     bool InitEgl(const FbContext &fb);
     bool InitInput();
+    static int LibinputOpen(const char *path, int flags, void *user_data);
+    static void LibinputClose(int fd, void *user_data);
     void ProcessInput(bool &running);
     void HandleLibinputEvent(struct libinput_event *event, bool &running);
     void UpdateDeltaTime();
