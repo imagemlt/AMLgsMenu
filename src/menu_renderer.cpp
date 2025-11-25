@@ -223,9 +223,9 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
 
 void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag) {
     (void)running_flag;
-    const ImVec2 menu_size = ImVec2(viewport->Size.x * 0.5f, viewport->Size.y * 0.5f);
+    const ImVec2 menu_size = ImVec2(viewport->Size.x * 0.5f, viewport->Size.y * 0.45f);
     const ImVec2 menu_pos = ImVec2(viewport->Pos.x + viewport->Size.x * 0.25f,
-                                   viewport->Pos.y + viewport->Size.y * 0.25f);
+                                   viewport->Pos.y + viewport->Size.y * 0.30f);
 
     ImGui::SetNextWindowBgAlpha(0.9f); // make menu opaque
     ImGui::SetNextWindowPos(menu_pos, ImGuiCond_Always);
@@ -244,7 +244,7 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag) {
         ImGui::Text("\u65e0\u7ebf\u94fe\u8def\u914d\u7f6e");
         ImGui::Separator();
 
-    ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(8, 6));
+    ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(8, 10)); // slightly taller rows
         if (ImGui::BeginTable("menu_table", 4, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoSavedSettings)) {
             ImGui::TableSetupColumn("L1", ImGuiTableColumnFlags_WidthStretch, 0.22f);
             ImGui::TableSetupColumn("C1", ImGuiTableColumnFlags_WidthStretch, 0.28f);
@@ -363,12 +363,8 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag) {
                          }
                      });
 
-            // bottom row: buttons grouped together on the right half
+            // bottom rows: confirm on its own row, then close below it
             ImGui::TableNextRow();
-            ImGui::TableSetColumnIndex(0);
-            ImGui::TextUnformatted(" ");
-            ImGui::TableSetColumnIndex(1);
-            ImGui::TextUnformatted(" ");
             ImGui::TableSetColumnIndex(2);
             ImGui::TextUnformatted(" ");
             ImGui::TableSetColumnIndex(3);
@@ -376,7 +372,12 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag) {
             if (ImGui::Button("\u786e\u8ba4", btn_sz)) {
                 state_.ToggleMenuVisibility();
             }
-            ImGui::SameLine();
+
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(2);
+            ImGui::TextUnformatted(" ");
+            ImGui::TableSetColumnIndex(3);
+            ImGui::Dummy(ImVec2(0, 6)); // small vertical gap
             if (ImGui::Button("\u5173\u95ed", btn_sz)) {
                 state_.ToggleMenuVisibility();
             }
