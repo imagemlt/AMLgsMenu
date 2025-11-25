@@ -184,7 +184,7 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
     };
 
     auto draw_horizon = [&](float roll_deg, float pitch_deg) {
-        const float line_half_len = viewport->Size.x * 0.25f * 0.66f; // shorten horizon line
+        const float line_half_len = viewport->Size.x * 0.25f * 0.33f; // further shorten horizon line
         const float rad = roll_deg * 3.1415926f / 180.0f;
         const float cosr = std::cos(rad);
         const float sinr = std::sin(rad);
@@ -236,8 +236,17 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
                        signal.str(), text_fill, icon_antenna_);
 
     if (data.has_flight_mode) {
-        draw_centered_text_no_icon(ImVec2(center.x, center.y - viewport->Size.y * 0.25f),
-                                   "Flight Mode: " + data.flight_mode, IM_COL32(0, 200, 255, 255));
+        ImFont *font = ImGui::GetFont();
+        float base = font ? font->FontSize : ImGui::GetFontSize();
+        float mode_size = base * 1.5f; // enlarge flight mode text
+        ImU32 mode_fill = IM_COL32(220, 245, 255, 255);   // light for sky background
+        ImU32 mode_outline = IM_COL32(0, 40, 80, 220);    // dark outline for contrast
+        std::string label = "Flight Mode: " + data.flight_mode;
+        ImVec2 size = ImGui::CalcTextSize(label.c_str());
+        ImVec2 pos(center.x - size.x * 0.5f, center.y - viewport->Size.y * 0.25f);
+        ImDrawList *dl = draw_list;
+        dl->AddText(font, mode_size, ImVec2(pos.x + 1.5f, pos.y + 1.5f), mode_outline, label.c_str());
+        dl->AddText(font, mode_size, pos, mode_fill, label.c_str());
     }
 
     ImGuiWindowFlags overlay_flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
