@@ -38,7 +38,8 @@ static MenuRenderer::TelemetryData BuildMockTelemetry(const MenuState &state) {
     std::ostringstream res;
     res << mode.width << "x" << mode.height;
     data.video_resolution = res.str();
-    data.video_refresh_hz = mode.refresh ? mode.refresh : 60;
+    int fps = GetOutputFps();
+    data.video_refresh_hz = fps > 0 ? fps : (mode.refresh ? mode.refresh : 60);
     data.bitrate_mbps = std::max(1.0f, 6.0f + 2.0f * std::sin(t * 0.4f));
 
     data.cell_voltage = 3.8f + 0.12f * std::sin(t * 0.6f);

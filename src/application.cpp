@@ -48,7 +48,7 @@ bool Application::Initialize(const std::string &font_path) {
     ImGui_ImplOpenGL3_Init("#version 100");
 
     auto sky_modes = DefaultSkyModes();
-    auto ground_modes = LoadHdmiModes("/sys/class/amhdmitx/amhdmitx0/modes");
+    auto ground_modes = LoadHdmiModes("/sys/class/amhdmitx/amhdmitx0/disp_cap");
     if (ground_modes.empty()) {
         ground_modes = sky_modes;
     }
