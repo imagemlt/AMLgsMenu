@@ -166,7 +166,7 @@
 <body>
     <div class="video-layer"></div>
     <div class="grid"></div>
-    <div class="horizon"></div>
+    <div class="horizon" id="horizon"></div>
 
     <div class="osd top-center glass-lite" id="signals"></div>
     <div class="osd mode" id="mode"></div>
@@ -223,6 +223,8 @@
             const pack = (cell * 4 + 0.4 * Math.cos(t * 0.3)).toFixed(2);
             const skyT = (45 + 5 * Math.sin(t * 0.22)).toFixed(1);
             const gndT = (40 + 4 * Math.cos(t * 0.18)).toFixed(1);
+            const roll = 10 * Math.sin(t * 0.6);
+            const pitch = 5 * Math.cos(t * 0.5);
 
             document.getElementById('signals').innerHTML =
                 iconRow(`GND A: ${sigA} dBm  |  GND B: ${sigB} dBm  |  RC: ${sigRc} dBm`);
@@ -238,6 +240,9 @@
             document.getElementById('temps').innerHTML =
                 iconRow(`天空端温度: ${skyT}℃`) +
                 iconRow(`地面端温度: ${gndT}℃`);
+
+            const horizon = document.getElementById('horizon');
+            horizon.style.transform = `translate(-50%, -50%) rotate(${roll}deg) translateY(${pitch * 4}px)`;
         }
 
         setInterval(update, 100);
