@@ -169,8 +169,8 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
 
     const float icon_size = 18.0f * 1.5f;
     const float icon_gap = 6.0f * 1.5f;
-    const ImU32 text_outline = IM_COL32(0, 0, 0, 255);             // stronger black edge
-    const ImU32 text_fill = IM_COL32(255, 235, 90, 255);           // bright yellow body for visibility
+    const ImU32 text_outline = IM_COL32(0, 0, 0, 255);                  // solid black edge
+    const ImU32 text_fill = IM_COL32(235, 245, 255, 255);               // cool light tone for visibility
 
     auto draw_icon = [&](ImVec2 pos, ImTextureID tex) {
         if (tex) {
@@ -239,8 +239,8 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
         ImFont *font = ImGui::GetFont();
         float base = ImGui::GetFontSize();
         float mode_size = base * 1.5f; // enlarge flight mode text
-        ImU32 mode_fill = IM_COL32(255, 235, 90, 255);    // bright yellow for visibility
-        ImU32 mode_outline = IM_COL32(0, 0, 0, 255);      // solid black outline
+        ImU32 mode_fill = IM_COL32(170, 220, 255, 255);   // soft cyan for readability
+        ImU32 mode_outline = IM_COL32(10, 26, 42, 240);   // deep navy outline
         std::string label = data.flight_mode;
         ImVec2 size = ImGui::CalcTextSize(label.c_str());
         ImVec2 pos(center.x - size.x * 0.5f, center.y - viewport->Size.y * 0.25f);
