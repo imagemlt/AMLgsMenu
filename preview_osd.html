@@ -210,9 +210,9 @@
 
         function update() {
             const t = Date.now() / 1000;
-            const sigA = Math.round(80 + 15 * Math.sin(t * 0.8));
-            const sigB = Math.round(78 + 18 * Math.cos(t * 0.65));
-            const sigRc = Math.round(90 + 8 * Math.sin(t * 1.1));
+            const sigA = Math.round(-60 + 5 * Math.sin(t * 0.8));
+            const sigB = Math.round(-62 + 6 * Math.cos(t * 0.65));
+            const sigRc = Math.round(-55 + 4 * Math.sin(t * 1.1));
             const mode = modes[Math.floor(t / 4) % modes.length];
             const lat = 37.773 + 0.001 * Math.sin(t * 0.15);
             const lon = -122.431 + 0.0015 * Math.cos(t * 0.12);
@@ -225,7 +225,7 @@
             const gndT = (40 + 4 * Math.cos(t * 0.18)).toFixed(1);
 
             document.getElementById('signals').innerHTML =
-                iconRow(`GND A: ${sigA}%  |  GND B: ${sigB}%  |  RC: ${sigRc}%`);
+                iconRow(`GND A: ${sigA} dBm  |  GND B: ${sigB} dBm  |  RC: ${sigRc} dBm`);
             document.getElementById('mode').textContent = `Flight Mode: ${mode}`;
             document.getElementById('gps').innerHTML =
                 iconRow(`GPS: ${lat.toFixed(5)}, ${lon.toFixed(5)}, ${alt.toFixed(1)}m`) +
