@@ -236,6 +236,14 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag) {
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 8.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 2.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(20, 24, 32, 238));
+    ImGui::PushStyleColor(ImGuiCol_Border, IM_COL32(80, 200, 190, 255));       // teal border
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, IM_COL32(34, 42, 54, 240));        // controls bg
+    ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, IM_COL32(60, 110, 125, 255));
+    ImGui::PushStyleColor(ImGuiCol_FrameBgActive, IM_COL32(78, 140, 155, 255));
+    ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(60, 140, 170, 240));       // default buttons
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(80, 170, 200, 255));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, IM_COL32(50, 120, 150, 255));
 
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse |
                              ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoTitleBar |
@@ -394,5 +402,6 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag) {
     }
 
     ImGui::End();
+    ImGui::PopStyleColor(8);
     ImGui::PopStyleVar(4);
 }
