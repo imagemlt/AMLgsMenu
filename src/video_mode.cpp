@@ -105,6 +105,16 @@ int GetOutputFps(const std::string &path) {
     return input;
 }
 
+float ReadTemperatureC(const std::string &path) {
+    std::ifstream file(path);
+    if (!file.is_open()) {
+        return 0.0f;
+    }
+    int milli = 0;
+    file >> milli;
+    return static_cast<float>(milli) / 1000.0f;
+}
+
 std::vector<VideoMode> DefaultSkyModes() {
     return {
         {"1920x1080 @ 60Hz", 1920, 1080, 60},

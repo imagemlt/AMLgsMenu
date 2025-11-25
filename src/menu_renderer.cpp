@@ -46,7 +46,7 @@ static MenuRenderer::TelemetryData BuildMockTelemetry(const MenuState &state) {
     data.pack_voltage = data.cell_voltage * 4.0f + 0.4f * std::cos(t * 0.3f);
 
     data.sky_temp_c = 45.0f + 5.0f * std::sin(t * 0.22f);
-    data.ground_temp_c = 40.0f + 4.0f * std::cos(t * 0.18f);
+    data.ground_temp_c = ReadTemperatureC();
     data.roll_deg = 10.0f * std::sin(t * 0.6f);
     data.pitch_deg = 5.0f * std::cos(t * 0.5f);
 
