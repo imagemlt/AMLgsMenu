@@ -16,4 +16,6 @@ private:
     void DrawMenu(const ImGuiViewport *viewport, bool &running_flag);
 
     MenuState &state_;
+    TelemetryData cached_telemetry_{};
+    float last_osd_update_time_ = -1.0f;
 };

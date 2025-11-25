@@ -82,9 +82,13 @@ MenuRenderer::MenuRenderer(MenuState &state) : state_(state) {}
 
 void MenuRenderer::Render(bool &running_flag) {
     const ImGuiViewport *viewport = ImGui::GetMainViewport();
-    const TelemetryData telemetry = BuildMockTelemetry(state_);
+    const float now = static_cast<float>(ImGui::GetTime());
+    if (last_osd_update_time_ < 0.0f || (now - last_osd_update_time_) >= 0.1f) {
+        cached_telemetry_ = BuildMockTelemetry(state_);
+        last_osd_update_time_ = now;
+    }
 
-    DrawOsd(viewport, telemetry);
+    DrawOsd(viewport, cached_telemetry_);
 
     if (state_.MenuVisible()) {
         DrawMenu(viewport, running_flag);
