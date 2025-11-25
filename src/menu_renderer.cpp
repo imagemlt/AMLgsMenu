@@ -171,6 +171,7 @@ void MenuRenderer::Render(bool &running_flag) {
 
 void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &data) const {
     ImDrawList *draw_list = ImGui::GetBackgroundDrawList();
+    const bool is_cn = state_.GetLanguage() == MenuState::Language::CN;
     const ImVec2 center(viewport->Pos.x + viewport->Size.x * 0.5f,
                         viewport->Pos.y + viewport->Size.y * 0.5f);
 
@@ -233,10 +234,18 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
     };
 
     std::ostringstream signal;
-    signal << "GND A: " << static_cast<int>(data.ground_signal_a) << " dBm  |  "
-           << "GND B: " << static_cast<int>(data.ground_signal_b) << " dBm";
-    if (data.has_rc_signal) {
-        signal << "  |  RC: " << static_cast<int>(data.rc_signal) << " dBm";
+    if (is_cn) {
+        signal << "\u5730\u9762A: " << static_cast<int>(data.ground_signal_a) << " dBm  |  "
+               << "\u5730\u9762B: " << static_cast<int>(data.ground_signal_b) << " dBm";
+        if (data.has_rc_signal) {
+            signal << "  |  RC: " << static_cast<int>(data.rc_signal) << " dBm";
+        }
+    } else {
+        signal << "GND A: " << static_cast<int>(data.ground_signal_a) << " dBm  |  "
+               << "GND B: " << static_cast<int>(data.ground_signal_b) << " dBm";
+        if (data.has_rc_signal) {
+            signal << "  |  RC: " << static_cast<int>(data.rc_signal) << " dBm";
+        }
     }
     // Place signals near top center with a small margin
     draw_centered_text(ImVec2(center.x, viewport->Pos.y + viewport->Size.y * 0.05f),
@@ -275,11 +284,20 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
     if (data.has_gps && ImGui::Begin("OSD_GPS", nullptr, overlay_flags)) {
         ImGui::PushStyleColor(ImGuiCol_Text, text_fill);
         char gps_buf[128];
-        snprintf(gps_buf, sizeof(gps_buf), "GPS: %.5f, %.5f, %.1fm",
-                 data.latitude, data.longitude, data.altitude_m);
+        if (is_cn) {
+            snprintf(gps_buf, sizeof(gps_buf), "GPS: %.5f, %.5f, %.1fm",
+                     data.latitude, data.longitude, data.altitude_m);
+        } else {
+            snprintf(gps_buf, sizeof(gps_buf), "GPS: %.5f, %.5f, %.1fm",
+                     data.latitude, data.longitude, data.altitude_m);
+        }
         icon_text_line(gps_buf, icon_gps_);
         char home_buf[64];
-        snprintf(home_buf, sizeof(home_buf), "\u79bb\u5bb6\u8ddd\u79bb: %.1fm", data.home_distance_m);
+        if (is_cn) {
+            snprintf(home_buf, sizeof(home_buf), "\u79bb\u5bb6\u8ddd\u79bb: %.1fm", data.home_distance_m);
+        } else {
+            snprintf(home_buf, sizeof(home_buf), "Home Dist: %.1fm", data.home_distance_m);
+        }
         icon_text_line(home_buf, icon_gps_);
         ImGui::PopStyleColor();
     }
@@ -292,8 +310,13 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
     if (ImGui::Begin("OSD_VIDEO", nullptr, overlay_flags)) {
         ImGui::PushStyleColor(ImGuiCol_Text, text_fill);
         char video_buf[128];
-        snprintf(video_buf, sizeof(video_buf), "\u89c6\u9891: %.1f Mbps %s @ %dHz",
-                 data.bitrate_mbps, data.video_resolution.c_str(), data.video_refresh_hz);
+        if (is_cn) {
+            snprintf(video_buf, sizeof(video_buf), "\u89c6\u9891: %.1f Mbps %s @ %dHz",
+                     data.bitrate_mbps, data.video_resolution.c_str(), data.video_refresh_hz);
+        } else {
+            snprintf(video_buf, sizeof(video_buf), "Video: %.1f Mbps %s @ %dHz",
+                     data.bitrate_mbps, data.video_resolution.c_str(), data.video_refresh_hz);
+        }
         icon_text_line(video_buf, icon_monitor_);
         ImGui::PopStyleColor();
     }
@@ -304,10 +327,18 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
     if (data.has_battery && ImGui::Begin("OSD_BATT", nullptr, overlay_flags)) {
         ImGui::PushStyleColor(ImGuiCol_Text, text_fill);
         char cell_buf[32];
-        snprintf(cell_buf, sizeof(cell_buf), "\u5355\u8282: %.2fV", data.cell_voltage);
+        if (is_cn) {
+            snprintf(cell_buf, sizeof(cell_buf), "\u5355\u8282: %.2fV", data.cell_voltage);
+        } else {
+            snprintf(cell_buf, sizeof(cell_buf), "Cell: %.2fV", data.cell_voltage);
+        }
         icon_text_line(cell_buf, icon_batt_cell_);
         char pack_buf[32];
-        snprintf(pack_buf, sizeof(pack_buf), "\u603b\u7535: %.2fV", data.pack_voltage);
+        if (is_cn) {
+            snprintf(pack_buf, sizeof(pack_buf), "\u603b\u7535: %.2fV", data.pack_voltage);
+        } else {
+            snprintf(pack_buf, sizeof(pack_buf), "Pack: %.2fV", data.pack_voltage);
+        }
         icon_text_line(pack_buf, icon_batt_pack_);
         ImGui::PopStyleColor();
     }
@@ -319,12 +350,12 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
     if (ImGui::Begin("OSD_TEMP", nullptr, overlay_flags)) {
         ImGui::PushStyleColor(ImGuiCol_Text, text_fill);
         char sky_buf[32];
-        snprintf(sky_buf, sizeof(sky_buf), "\u5929\u7a7a\u7aef\u6e29\u5ea6: %.1f\u2103", data.sky_temp_c);
+        snprintf(sky_buf, sizeof(sky_buf), is_cn ? "\u5929\u7a7a\u7aef\u6e29\u5ea6: %.1f\u2103" : "Air Temp: %.1fC", data.sky_temp_c);
         if (data.has_sky_temp) {
             icon_text_line(sky_buf, icon_temp_air_);
         }
         char ground_buf[32];
-        snprintf(ground_buf, sizeof(ground_buf), "\u5730\u9762\u7aef\u6e29\u5ea6: %.1f\u2103", data.ground_temp_c);
+        snprintf(ground_buf, sizeof(ground_buf), is_cn ? "\u5730\u9762\u7a7a\u7aef\u6e29\u5ea6: %.1f\u2103" : "Ground Temp: %.1fC", data.ground_temp_c);
         icon_text_line(ground_buf, icon_temp_ground_);
         ImGui::PopStyleColor();
     }
@@ -336,6 +367,7 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag) {
     const ImVec2 menu_size = ImVec2(viewport->Size.x * 0.5f, viewport->Size.y * 0.45f);
     const ImVec2 menu_pos = ImVec2(viewport->Pos.x + viewport->Size.x * 0.25f,
                                    viewport->Pos.y + viewport->Size.y * 0.30f);
+    const bool is_cn = state_.GetLanguage() == MenuState::Language::CN;
 
     ImGui::SetNextWindowBgAlpha(0.9f); // make menu opaque
     ImGui::SetNextWindowPos(menu_pos, ImGuiCond_Always);
@@ -359,7 +391,7 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag) {
                              ImGuiWindowFlags_NoSavedSettings;
 
     if (ImGui::Begin("GS Control Menu", nullptr, flags)) {
-        ImGui::Text("\u65e0\u7ebf\u94fe\u8def\u914d\u7f6e");
+        ImGui::TextUnformatted(is_cn ? "\u65e0\u7ebf\u94fe\u8def\u914d\u7f6e" : "Wireless Link Settings");
         ImGui::Separator();
 
     ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(8, 10)); // slightly taller rows
@@ -384,7 +416,7 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag) {
 
             const auto &channels = state_.Channels();
             const auto &bandwidths = state_.Bandwidths();
-            row_pair("\u4fe1\u9053", [&] {
+            row_pair(is_cn ? "\u4fe1\u9053" : "Channel", [&] {
                          if (ImGui::BeginCombo("##channel", std::to_string(channels[state_.ChannelIndex()]).c_str())) {
                              for (int i = 0; i < static_cast<int>(channels.size()); ++i) {
                                  bool selected = (state_.ChannelIndex() == i);
@@ -396,7 +428,7 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag) {
                              ImGui::EndCombo();
                          }
                      },
-                     "\u9891\u5bbd", [&] {
+                     is_cn ? "\u9891\u5bbd" : "Bandwidth", [&] {
                          if (ImGui::BeginCombo("##bandwidth", bandwidths[state_.BandwidthIndex()])) {
                              for (int i = 0; i < static_cast<int>(bandwidths.size()); ++i) {
                                  bool selected = (state_.BandwidthIndex() == i);
@@ -411,7 +443,7 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag) {
 
             const auto &sky_modes = state_.SkyModes();
             const auto &ground_modes = state_.GroundModes();
-            row_pair("\u5929\u7a7a\u7aef\u5206\u8fa8\u7387/\u5237\u65b0\u7387", [&] {
+            row_pair(is_cn ? "\u5929\u7a7a\u7aef\u5206\u8fa8\u7387/\u5237\u65b0\u7387" : "Air Res/Refresh", [&] {
                          if (!sky_modes.empty() && ImGui::BeginCombo("##sky_mode", FormatVideoModeLabel(sky_modes[state_.SkyModeIndex()]).c_str())) {
                              for (int i = 0; i < static_cast<int>(sky_modes.size()); ++i) {
                                  bool selected = (state_.SkyModeIndex() == i);
@@ -423,7 +455,7 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag) {
                              ImGui::EndCombo();
                          }
                      },
-                     "\u5730\u9762\u7aef\u5206\u8fa8\u7387/\u5237\u65b0\u7387", [&] {
+                     is_cn ? "\u5730\u9762\u7aef\u5206\u8fa8\u7387/\u5237\u65b0\u7387" : "Ground Res/Refresh", [&] {
                          if (!ground_modes.empty() && ImGui::BeginCombo("##ground_mode", FormatVideoModeLabel(ground_modes[state_.GroundModeIndex()]).c_str())) {
                              for (int i = 0; i < static_cast<int>(ground_modes.size()); ++i) {
                                  bool selected = (state_.GroundModeIndex() == i);
@@ -438,7 +470,7 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag) {
 
             const auto &bitrates = state_.Bitrates();
             const auto &powers = state_.PowerLevels();
-            row_pair("\u7801\u7387(Mbps)", [&] {
+            row_pair(is_cn ? "\u7801\u7387(Mbps)" : "Bitrate (Mbps)", [&] {
                          if (ImGui::BeginCombo("##bitrate", std::to_string(bitrates[state_.BitrateIndex()]).c_str())) {
                              for (int i = 0; i < static_cast<int>(bitrates.size()); ++i) {
                                  bool selected = (state_.BitrateIndex() == i);
@@ -450,7 +482,7 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag) {
                              ImGui::EndCombo();
                          }
                      },
-                     "\u5929\u7a7a\u7aef\u53d1\u5c04\u529f\u7387", [&] {
+                     is_cn ? "\u5929\u7a7a\u7aef\u53d1\u5c04\u529f\u7387" : "Air TX Power", [&] {
                          if (ImGui::BeginCombo("##sky_power", std::to_string(powers[state_.SkyPowerIndex()]).c_str())) {
                              for (int i = 0; i < static_cast<int>(powers.size()); ++i) {
                                  bool selected = (state_.SkyPowerIndex() == i);
@@ -463,7 +495,7 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag) {
                          }
                      });
 
-            row_pair("\u5730\u9762\u7aef\u53d1\u5c04\u529f\u7387", [&] {
+            row_pair(is_cn ? "\u5730\u9762\u7aef\u53d1\u5c04\u529f\u7387" : "Ground TX Power", [&] {
                          if (ImGui::BeginCombo("##ground_power", std::to_string(powers[state_.GroundPowerIndex()]).c_str())) {
                              for (int i = 0; i < static_cast<int>(powers.size()); ++i) {
                                  bool selected = (state_.GroundPowerIndex() == i);
@@ -475,32 +507,48 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag) {
                              ImGui::EndCombo();
                          }
                      },
-                     "\u5f55\u50cf\u63a7\u5236", [&] {
-                         if (ImGui::Button(state_.Recording() ? "\u505c\u6b62\u5f55\u50cf" : "\u5f00\u542f\u5f55\u50cf", ImVec2(-1, 0))) {
+                     is_cn ? "\u5f55\u50cf\u63a7\u5236" : "Recording", [&] {
+                         if (ImGui::Button(state_.Recording() ? (is_cn ? "\u505c\u6b62\u5f55\u50cf" : "Stop Recording")
+                                                              : (is_cn ? "\u5f00\u542f\u5f55\u50cf" : "Start Recording"),
+                                           ImVec2(-1, 0))) {
                              state_.ToggleRecording();
                          }
                      });
 
-            // bottom rows: Kodi launch, then confirm/close on separate row
+            row_pair(is_cn ? "\u8bed\u8a00" : "Language", [&] {
+                         const char *label = state_.GetLanguage() == MenuState::Language::CN ? "\u4e2d\u6587" : "English";
+                         if (ImGui::BeginCombo("##lang", label)) {
+                             if (ImGui::Selectable("\u4e2d\u6587", state_.GetLanguage() == MenuState::Language::CN)) {
+                                 state_.SetLanguage(MenuState::Language::CN);
+                             }
+                             if (ImGui::Selectable("English", state_.GetLanguage() == MenuState::Language::EN)) {
+                                 state_.SetLanguage(MenuState::Language::EN);
+                             }
+                             ImGui::EndCombo();
+                         }
+                     },
+                     is_cn ? "\u6253\u5f00 KODI" : "Open KODI", [&] {
+                         if (ImGui::Button(is_cn ? "\u6253\u5f00 KODI" : "Open KODI", ImVec2(-1, 0))) {
+                             std::system("bash -lc 'killall -9 AMLDigitalFPV || true; systemctl restart kodi'"); // restart kodi and exit
+                             running_flag = false;
+                         }
+                     });
+
             ImGui::TableNextRow();
             ImGui::TableSetColumnIndex(2);
             ImGui::TextUnformatted(" ");
             ImGui::TableSetColumnIndex(3);
             ImVec2 btn_sz(-1, 0);
-            if (ImGui::Button("\u6253\u5f00 KODI", btn_sz)) {
-                std::system("bash -lc 'killall -9 AMLDigitalFPV || true; systemctl restart kodi'"); // restart kodi and exit
-                running_flag = false;
+            if (ImGui::Button(is_cn ? "\u786e\u8ba4" : "OK", btn_sz)) {
+                state_.ToggleMenuVisibility();
             }
 
             ImGui::TableNextRow();
             ImGui::TableSetColumnIndex(2);
             ImGui::TextUnformatted(" ");
             ImGui::TableSetColumnIndex(3);
-            if (ImGui::Button("\u786e\u8ba4", btn_sz)) {
-                state_.ToggleMenuVisibility();
-            }
-            ImGui::SameLine(0.0f, 12.0f);
-            if (ImGui::Button("\u5173\u95ed", btn_sz)) {
+            ImGui::Dummy(ImVec2(0, 6)); // small vertical gap
+            if (ImGui::Button(is_cn ? "\u5173\u95ed" : "Close", btn_sz)) {
                 state_.ToggleMenuVisibility();
             }
 

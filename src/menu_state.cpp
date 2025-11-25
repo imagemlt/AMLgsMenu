@@ -78,6 +78,14 @@ void MenuState::SetGroundPowerIndex(int index) {
     NotifyChange(SettingType::GroundPower);
 }
 
+void MenuState::SetLanguage(Language lang) {
+    if (language_ == lang) {
+        return;
+    }
+    language_ = lang;
+    NotifyChange(SettingType::Language);
+}
+
 void MenuState::ToggleRecording() {
     bool new_value = !recording_;
     if (new_value == recording_) {

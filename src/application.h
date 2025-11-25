@@ -43,6 +43,7 @@ private:
     int FindChannelIndex(int channel_val) const;
     int FindPowerIndex(int power_val) const;
     int FindGroundModeIndex(const std::string &label) const;
+    void ApplyLanguageToImGui(MenuState::Language lang);
 
     FbContext fb_{};
     EGLDisplay egl_display_ = EGL_NO_DISPLAY;

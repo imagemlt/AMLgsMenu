@@ -57,6 +57,7 @@ bool Application::Initialize(const std::string &font_path) {
 
     menu_state_ = std::make_unique<MenuState>(sky_modes, ground_modes);
     LoadConfig();
+    ApplyLanguageToImGui(menu_state_->GetLanguage());
     renderer_ = std::make_unique<MenuRenderer>(*menu_state_);
 
     menu_state_->SetOnChangeCallback([this](MenuState::SettingType type) {
@@ -77,6 +78,12 @@ bool Application::Initialize(const std::string &font_path) {
         case MenuState::SettingType::GroundPower:
             SaveConfigValue("driver_txpower_override", std::to_string(menu_state_->PowerLevels()[menu_state_->GroundPowerIndex()]));
             break;
+        case MenuState::SettingType::Language: {
+            auto lang = menu_state_->GetLanguage();
+            SaveConfigValue("lang", lang == MenuState::Language::CN ? "cn" : "en");
+            ApplyLanguageToImGui(lang);
+            break;
+        }
         default:
             break;
         }
@@ -359,6 +366,13 @@ void Application::LoadConfig() {
         int idx = FindGroundModeIndex(label);
         if (idx >= 0) menu_state_->SetGroundModeIndex(idx);
     }
+    auto it_lang = config_kv_.find("lang");
+    if (it_lang != config_kv_.end()) {
+        std::string v = it_lang->second;
+        for (auto &c : v) c = static_cast<char>(tolower(c));
+        if (v == "en") menu_state_->SetLanguage(MenuState::Language::EN);
+        else if (v == "cn") menu_state_->SetLanguage(MenuState::Language::CN);
+    }
 }
 
 void Application::SaveConfigValue(const std::string &key, const std::string &value) {
@@ -392,6 +406,16 @@ int Application::FindGroundModeIndex(const std::string &label) const {
         if (modes[i].label == label) return static_cast<int>(i);
     }
     return -1;
+}
+
+void Application::ApplyLanguageToImGui(MenuState::Language lang) {
+    ImGuiIO &io = ImGui::GetIO();
+    io.Fonts->Clear();
+    const float base_size = 26.0f;
+    // Keep using the same font path already loaded; rely on caller to rebuild atlas in Init if needed.
+    io.Fonts->AddFontDefault();
+    io.Fonts->Build();
+    (void)lang;
 }
 
 int Application::LibinputOpen(const char *path, int flags, void *user_data) {

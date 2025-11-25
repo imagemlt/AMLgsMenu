@@ -20,6 +20,12 @@ public:
         SkyPower,
         GroundPower,
         Recording,
+        Language,
+    };
+
+    enum class Language {
+        CN = 0,
+        EN = 1,
     };
 
     using SettingChangedCallback = std::function<void(SettingType)>;
@@ -39,6 +45,7 @@ public:
     int BitrateIndex() const { return bitrate_index_; }
     int SkyPowerIndex() const { return sky_power_index_; }
     int GroundPowerIndex() const { return ground_power_index_; }
+    Language GetLanguage() const { return language_; }
     bool Recording() const { return recording_; }
     bool ShouldExit() const { return should_exit_; }
 
@@ -49,6 +56,7 @@ public:
     void SetBitrateIndex(int index);
     void SetSkyPowerIndex(int index);
     void SetGroundPowerIndex(int index);
+    void SetLanguage(Language lang);
     void ToggleMenuVisibility() { menu_visible_ = !menu_visible_; }
 
     void ToggleRecording();
@@ -75,6 +83,7 @@ private:
     int bitrate_index_ = 0;
     int sky_power_index_ = 0;
     int ground_power_index_ = 0;
+    Language language_ = Language::CN;
     bool menu_visible_ = false;
     bool recording_ = false;
     bool should_exit_ = false;
