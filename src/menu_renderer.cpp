@@ -219,6 +219,24 @@ void MenuRenderer::Render(bool &running_flag) {
     }
     last_render_tp_ = now_tp;
 
+    // FPS logging (OSD render) once per second
+    static auto last_log = std::chrono::steady_clock::time_point{};
+    static uint64_t frame_count = 0;
+    ++frame_count;
+    if (last_log.time_since_epoch().count() == 0) {
+        last_log = now_tp;
+    } else {
+        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now_tp - last_log).count();
+        if (ms >= 1000) {
+            double fps = (frame_count * 1000.0) / std::max<int64_t>(1, ms);
+            std::fprintf(stdout, "[AMLgsMenu] OSD render FPS=%.2f (menu %s)\n",
+                         fps, state_.MenuVisible() ? "on" : "off");
+            std::fflush(stdout);
+            frame_count = 0;
+            last_log = now_tp;
+        }
+    }
+
     DrawOsd(viewport, cached_telemetry_);
 
     ImGuiIO &io = ImGui::GetIO();
