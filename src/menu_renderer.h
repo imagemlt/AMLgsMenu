@@ -4,6 +4,7 @@
 
 #include "imgui.h"
 #include <functional>
+#include <chrono>
 #include <vector>
 
 class MenuRenderer {
@@ -49,6 +50,7 @@ private:
     std::function<TelemetryData()> telemetry_provider_;
     TelemetryData cached_telemetry_{};
     float last_osd_update_time_ = -1.0f;
+    std::chrono::steady_clock::time_point last_osd_tp_{};
     ImTextureID icon_antenna_{};
     ImTextureID icon_batt_cell_{};
     ImTextureID icon_batt_pack_{};

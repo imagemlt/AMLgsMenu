@@ -155,14 +155,16 @@ MenuRenderer::~MenuRenderer() {
 
 void MenuRenderer::Render(bool &running_flag) {
     const ImGuiViewport *viewport = ImGui::GetMainViewport();
-    const float now = static_cast<float>(ImGui::GetTime());
-    if (last_osd_update_time_ < 0.0f || (now - last_osd_update_time_) >= 0.1f) {
+    auto now_tp = std::chrono::steady_clock::now();
+    if (last_osd_update_time_ < 0.0f || last_osd_tp_.time_since_epoch().count() == 0 ||
+        std::chrono::duration_cast<std::chrono::milliseconds>(now_tp - last_osd_tp_).count() >= 100) {
         if (use_mock_) {
             cached_telemetry_ = BuildMockTelemetry(state_);
         } else if (telemetry_provider_) {
             cached_telemetry_ = telemetry_provider_();
         }
-        last_osd_update_time_ = now;
+        last_osd_update_time_ = static_cast<float>(ImGui::GetTime());
+        last_osd_tp_ = now_tp;
     }
 
     DrawOsd(viewport, cached_telemetry_);
