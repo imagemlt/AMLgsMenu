@@ -352,10 +352,16 @@ void Application::ApplyGroundPower() {
 
 void Application::ApplyLocalMonitorChannel(int channel) {
     if (channel <= 0) return;
+    // Determine bandwidth suffix for iw channel command
+    const char *bw_suffix = "";
+    int bw_mhz = (menu_state_->BandwidthIndex() == 0) ? 10 : (menu_state_->BandwidthIndex() == 1 ? 20 : 40);
+    if (bw_mhz == 20) bw_suffix = " HT20";
+    else if (bw_mhz == 40) bw_suffix = " HT40+";
+    // 10 MHz left empty (iw may treat as default/legacy)
     std::ostringstream cmd;
     cmd << "sh -c 'for dev in $(iw dev 2>/dev/null | "
         << "awk '\\''/Interface/ {iface=$2} /type[[:space:]]+monitor/ {print iface}'\\''); "
-        << "do iw dev $dev set channel " << channel << "; done'";
+        << "do iw dev $dev set channel " << channel << bw_suffix << "; done'";
     if (cmd_runner_) {
         cmd_runner_->Enqueue(cmd.str());
     }
