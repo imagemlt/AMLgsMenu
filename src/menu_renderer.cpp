@@ -363,11 +363,11 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
 }
 
 void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag) {
-    (void)running_flag;
     const ImVec2 menu_size = ImVec2(viewport->Size.x * 0.5f, viewport->Size.y * 0.45f);
     const ImVec2 menu_pos = ImVec2(viewport->Pos.x + viewport->Size.x * 0.25f,
                                    viewport->Pos.y + viewport->Size.y * 0.30f);
     const bool is_cn = state_.GetLanguage() == MenuState::Language::CN;
+    bool kodi_popup_requested = false;
 
     ImGui::SetNextWindowBgAlpha(0.9f); // make menu opaque
     ImGui::SetNextWindowPos(menu_pos, ImGuiCond_Always);
@@ -529,8 +529,7 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag) {
                      },
                      is_cn ? "\u6253\u5f00 KODI" : "Open KODI", [&] {
                          if (ImGui::Button(is_cn ? "\u6253\u5f00 KODI" : "Open KODI", ImVec2(-1, 0))) {
-                             std::system("bash -lc 'killall -9 AMLDigitalFPV || true; systemctl restart kodi'"); // restart kodi and exit
-                             running_flag = false;
+                             kodi_popup_requested = true;
                          }
                      });
 
@@ -555,6 +554,31 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag) {
             ImGui::EndTable();
         }
         ImGui::PopStyleVar();
+
+        if (kodi_popup_requested) {
+            ImGui::OpenPopup("confirm_kodi");
+        }
+        ImGui::SetNextWindowSize(ImVec2(360, 0), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + viewport->Size.x * 0.5f,
+                                       viewport->Pos.y + viewport->Size.y * 0.5f),
+                                ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+        if (ImGui::BeginPopupModal("confirm_kodi", nullptr,
+                                   ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar)) {
+            const char *msg = is_cn ? "\u6253\u5f00 KODI \u5c06\u5173\u95ed\u56fe\u4f20\u7a0b\u5e8f\uff0c\u662f\u5426\u7ee7\u7eed\uff1f"
+                                    : "Opening KODI will close the video link process. Continue?";
+            ImGui::TextWrapped("%s", msg);
+            ImGui::Spacing();
+            if (ImGui::Button(is_cn ? "\u53d6\u6d88" : "Cancel", ImVec2(140, 0))) {
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button(is_cn ? "\u786e\u8ba4" : "Confirm", ImVec2(140, 0))) {
+                std::system("bash -lc 'killall -9 AMLDigitalFPV || true; systemctl restart kodi'"); // restart kodi and exit
+                running_flag = false;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
 
     }
 

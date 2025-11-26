@@ -10,6 +10,7 @@ option(AML_ENABLE_GLES "Use OpenGL ES backends" ON)
 add_executable(AMLgsMenu
     src/application.cpp
     src/main.cpp
+    src/mavlink_receiver.cpp
     src/menu_renderer.cpp
     src/menu_state.cpp
     src/video_mode.cpp
@@ -32,9 +33,13 @@ endif()
 # ImGui is expected to be added as a subdirectory or provided by the toolchain
 # Define IMGUI_ROOT to point to your local checkout if needed
 set(IMGUI_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui" CACHE PATH "Dear ImGui root directory")
+set(MAVLINK_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/third_party/mavlink" CACHE PATH "MAVLink c_library_v2 root directory")
 
 if (NOT EXISTS "${IMGUI_ROOT}/imgui.h")
     message(FATAL_ERROR "ImGui not found at ${IMGUI_ROOT}. Initialize submodule with `git submodule update --init --recursive` or set IMGUI_ROOT.")
+endif()
+if (NOT EXISTS "${MAVLINK_ROOT}/common/mavlink.h")
+    message(FATAL_ERROR "MAVLink headers not found at ${MAVLINK_ROOT}. Initialize submodule with `git submodule update --init --recursive` or set MAVLINK_ROOT.")
 endif()
 
 set(IMGUI_SRC
@@ -47,7 +52,7 @@ set(IMGUI_SRC
 )
 
 target_sources(AMLgsMenu PRIVATE ${IMGUI_SRC})
-target_include_directories(AMLgsMenu PRIVATE ${IMGUI_ROOT} ${IMGUI_ROOT}/backends)
+target_include_directories(AMLgsMenu PRIVATE ${IMGUI_ROOT} ${IMGUI_ROOT}/backends ${MAVLINK_ROOT})
 
 # Link against EGL if available for fbdev pipelines
 find_library(EGL_LIBRARY EGL)
