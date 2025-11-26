@@ -2,6 +2,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <sys/resource.h>
 
 CommandExecutor::~CommandExecutor() {
     Stop();
@@ -36,6 +37,9 @@ void CommandExecutor::Enqueue(const std::string &cmd) {
 }
 
 void CommandExecutor::ThreadFunc() {
+#ifdef __linux__
+    setpriority(PRIO_PROCESS, 0, 5);
+#endif
     while (true) {
         std::string cmd;
         {

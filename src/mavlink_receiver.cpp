@@ -7,6 +7,7 @@
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <sys/resource.h>
 
 namespace {
 constexpr double kDegToRad = M_PI / 180.0;
@@ -67,7 +68,7 @@ void MavlinkReceiver::ThreadFunc() {
     sched_param sp{};
     sp.sched_priority = 0;
     pthread_setschedparam(pthread_self(), SCHED_OTHER, &sp);
-    nice(5);
+    setpriority(PRIO_PROCESS, 0, 5);
 #endif
 
     while (running_) {
