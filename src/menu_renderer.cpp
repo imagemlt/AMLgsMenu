@@ -209,34 +209,7 @@ void MenuRenderer::Render(bool &running_flag) {
         last_osd_tp_ = now_tp;
     }
 
-    // Limit OSD render to ~20 FPS when menu is hidden; menu stays full rate.
-    if (!state_.MenuVisible()) {
-        if (last_render_tp_.time_since_epoch().count() != 0) {
-            auto ms_since = std::chrono::duration_cast<std::chrono::milliseconds>(now_tp - last_render_tp_).count();
-            if (ms_since < 50) {
-                return; // skip frame to cap ~20fps without extra clears
-            }
-        }
-    }
-    last_render_tp_ = now_tp;
-
-    // FPS logging (OSD render) once per second
-    static auto last_log = std::chrono::steady_clock::time_point{};
-    static uint64_t frame_count = 0;
-    ++frame_count;
-    if (last_log.time_since_epoch().count() == 0) {
-        last_log = now_tp;
-    } else {
-        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now_tp - last_log).count();
-        if (ms >= 1000) {
-            double fps = (frame_count * 1000.0) / std::max<int64_t>(1, ms);
-            std::fprintf(stdout, "[AMLgsMenu] OSD render FPS=%.2f (menu %s)\n",
-                         fps, state_.MenuVisible() ? "on" : "off");
-            std::fflush(stdout);
-            frame_count = 0;
-            last_log = now_tp;
-        }
-    }
+    // No render throttling; always draw each frame. Remove FPS logs to reduce noise.
 
     DrawOsd(viewport, cached_telemetry_);
 
