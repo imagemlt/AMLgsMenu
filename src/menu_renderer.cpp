@@ -156,8 +156,13 @@ MenuRenderer::~MenuRenderer() {
 void MenuRenderer::Render(bool &running_flag) {
     const ImGuiViewport *viewport = ImGui::GetMainViewport();
     auto now_tp = std::chrono::steady_clock::now();
-    if (last_osd_update_time_ < 0.0f || last_osd_tp_.time_since_epoch().count() == 0 ||
-        std::chrono::duration_cast<std::chrono::milliseconds>(now_tp - last_osd_tp_).count() >= 100) {
+    bool should_refresh = true;
+    if (!use_mock_) {
+        // throttle to 10Hz when using real telemetry
+        should_refresh = (last_osd_update_time_ < 0.0f || last_osd_tp_.time_since_epoch().count() == 0 ||
+                          std::chrono::duration_cast<std::chrono::milliseconds>(now_tp - last_osd_tp_).count() >= 100);
+    }
+    if (should_refresh) {
         if (use_mock_) {
             cached_telemetry_ = BuildMockTelemetry(state_);
         } else if (telemetry_provider_) {
