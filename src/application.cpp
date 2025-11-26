@@ -353,7 +353,8 @@ void Application::ApplyGroundPower() {
 void Application::ApplyLocalMonitorChannel(int channel) {
     if (channel <= 0) return;
     std::ostringstream cmd;
-    cmd << "sh -c 'for dev in $(iw dev 2>/dev/null | awk \"/Interface/ {name=$2} /type monitor/ {print name}\"); "
+    cmd << "sh -c 'for dev in $(iw dev 2>/dev/null | "
+        << "awk '\\''/Interface/ {iface=$2} /type[[:space:]]+monitor/ {print iface}'\\''); "
         << "do iw dev $dev set channel " << channel << "; done'";
     if (cmd_runner_) {
         cmd_runner_->Enqueue(cmd.str());
@@ -364,7 +365,8 @@ void Application::ApplyLocalMonitorPower(int power_level) {
     if (power_level <= 0) return;
     int tx_pwr = power_level * 50;
     std::ostringstream cmd;
-    cmd << "sh -c 'for dev in $(iw dev 2>/dev/null | awk \"/Interface/ {name=$2} /type monitor/ {print name}\"); "
+    cmd << "sh -c 'for dev in $(iw dev 2>/dev/null | "
+        << "awk '\\''/Interface/ {iface=$2} /type[[:space:]]+monitor/ {print iface}'\\''); "
         << "do iw dev $dev set txpower fixed " << tx_pwr << "; done'";
     if (cmd_runner_) {
         cmd_runner_->Enqueue(cmd.str());
