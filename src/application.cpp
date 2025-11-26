@@ -310,10 +310,11 @@ void Application::ApplyBitrate() {
     if (!udp_client_) return;
     const auto &bitrates = menu_state_->Bitrates();
     if (bitrates.empty()) return;
-    int br = bitrates[menu_state_->BitrateIndex()];
+    int br_mbps = bitrates[menu_state_->BitrateIndex()];
+    int br_kbps = br_mbps * 1024; // CLI expects kbps; e.g. 2 -> 2048
     std::ostringstream cmd;
-    cmd << "cli -s .video0.bitrate " << br
-        << " && curl -s 'http://localhost/api/v1/set?video0.bitrate=" << br << "'";
+    cmd << "cli -s .video0.bitrate " << br_kbps
+        << " && curl -s 'http://localhost/api/v1/set?video0.bitrate=" << br_kbps << "'";
     if (!udp_client_->Send(cmd.str(), false)) {
         std::fprintf(stderr, "[AMLgsMenu] Failed to send bitrate command\n");
     }
