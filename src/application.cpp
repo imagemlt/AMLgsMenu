@@ -192,7 +192,10 @@ void Application::Run() {
         glClearColor(0, 0, 0, 0);
         glClear(GL_COLOR_BUFFER_BIT);
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-        eglSwapBuffers(egl_display_, egl_surface_);
+        if (!eglSwapBuffers(egl_display_, egl_surface_)) {
+            std::fprintf(stderr, "[AMLgsMenu] eglSwapBuffers failed, stopping loop\n");
+            running_ = false;
+        }
 
         ++frame_counter;
         auto now = std::chrono::steady_clock::now();
@@ -309,7 +312,8 @@ bool Application::InitEgl(const FbContext &fb) {
         std::fprintf(stderr, "[AMLgsMenu] eglMakeCurrent failed\n");
         return false;
     }
-    eglSwapInterval(egl_display_, 1);
+    // Disable vsync to avoid driver blocking on fbdev/KMS-less pipelines.
+    eglSwapInterval(egl_display_, 0);
     return true;
 }
 
