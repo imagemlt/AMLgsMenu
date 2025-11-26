@@ -192,6 +192,7 @@ void Application::Run() {
         glClearColor(0, 0, 0, 0);
         glClear(GL_COLOR_BUFFER_BIT);
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+        auto before_swap = std::chrono::steady_clock::now();
         if (!eglSwapBuffers(egl_display_, egl_surface_)) {
             std::fprintf(stderr, "[AMLgsMenu] eglSwapBuffers failed, stopping loop\n");
             running_ = false;
@@ -199,9 +200,12 @@ void Application::Run() {
 
         ++frame_counter;
         auto now = std::chrono::steady_clock::now();
-        if (std::chrono::duration_cast<std::chrono::milliseconds>(now - last_log).count() >= 500) {
-            std::fprintf(stdout, "[AMLgsMenu] Frame %llu swap done\n",
-                         static_cast<unsigned long long>(frame_counter));
+        auto ms_since_log = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_log).count();
+        if (ms_since_log >= 500) {
+            auto ms_swap = std::chrono::duration_cast<std::chrono::milliseconds>(now - before_swap).count();
+            std::fprintf(stdout, "[AMLgsMenu] Frame %llu swap done (swap ms=%lld)\n",
+                         static_cast<unsigned long long>(frame_counter),
+                         static_cast<long long>(ms_swap));
             std::fflush(stdout);
             last_log = now;
         }
@@ -312,8 +316,8 @@ bool Application::InitEgl(const FbContext &fb) {
         std::fprintf(stderr, "[AMLgsMenu] eglMakeCurrent failed\n");
         return false;
     }
-    // Disable vsync to avoid driver blocking on fbdev/KMS-less pipelines.
-    eglSwapInterval(egl_display_, 0);
+    // Restore vsync (swap interval 1); adjust if target platform requires immediate swaps.
+    eglSwapInterval(egl_display_, 1);
     return true;
 }
 
