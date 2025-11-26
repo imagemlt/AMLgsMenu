@@ -169,6 +169,21 @@ void MenuRenderer::Render(bool &running_flag) {
         last_osd_tp_ = now_tp;
     }
 
+    static uint64_t osd_frame_counter = 0;
+    static auto last_osd_log = std::chrono::steady_clock::now();
+    ++osd_frame_counter;
+    auto now = std::chrono::steady_clock::now();
+    auto ms_since_log = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_osd_log).count();
+    if (ms_since_log >= 10000) { // every 10s
+        std::fprintf(stdout, "[AMLgsMenu] OSD frames %llu in %lld ms (~%.2f FPS)\n",
+                     static_cast<unsigned long long>(osd_frame_counter),
+                     static_cast<long long>(ms_since_log),
+                     (osd_frame_counter * 1000.0) / std::max(1LL, ms_since_log));
+        std::fflush(stdout);
+        osd_frame_counter = 0;
+        last_osd_log = now;
+    }
+
     DrawOsd(viewport, cached_telemetry_);
 
     ImGuiIO &io = ImGui::GetIO();
