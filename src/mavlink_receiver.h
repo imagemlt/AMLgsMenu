@@ -16,6 +16,7 @@ struct ParsedTelemetry {
     bool has_battery = false;
     bool has_radio_rssi = false;
     bool has_sky_temp = false;
+    bool has_flight_mode = false;
     // optionals
     bool has_video_metrics = false;
     // data
