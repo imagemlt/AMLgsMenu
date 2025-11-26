@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <cstdio>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -57,6 +58,7 @@ private:
     int sock_ = -1;
     std::thread worker_;
     std::atomic<bool> running_{false};
+    bool first_msg_logged_ = false;
 
     mutable std::mutex mtx_;
     ParsedTelemetry telem_;

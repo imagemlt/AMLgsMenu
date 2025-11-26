@@ -88,6 +88,11 @@ void MavlinkReceiver::ThreadFunc() {
 
 void MavlinkReceiver::HandleMessage(const mavlink_message_t &msg) {
     std::lock_guard<std::mutex> lock(mtx_);
+    if (!first_msg_logged_) {
+        std::fprintf(stdout, "[AMLgsMenu] First MAVLink message received (id=%u)\n", msg.msgid);
+        std::fflush(stdout);
+        first_msg_logged_ = true;
+    }
     switch (msg.msgid) {
     case MAVLINK_MSG_ID_HEARTBEAT: {
         uint8_t base = mavlink_msg_heartbeat_get_base_mode(&msg);
