@@ -112,7 +112,10 @@ float ReadTemperatureC(const std::string &path) {
     }
     int milli = 0;
     file >> milli;
-    return static_cast<float>(milli) / 1000.0f;
+    float c = static_cast<float>(milli) / 1000.0f;
+    std::fprintf(stdout, "[AMLgsMenu] Read temperature %s -> %.2fC\n", path.c_str(), c);
+    std::fflush(stdout);
+    return c;
 }
 
 std::vector<VideoMode> DefaultSkyModes() {
