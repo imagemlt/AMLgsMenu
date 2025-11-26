@@ -156,25 +156,25 @@ MenuRenderer::~MenuRenderer() {
 void MenuRenderer::Render(bool &running_flag) {
     const ImGuiViewport *viewport = ImGui::GetMainViewport();
     auto now_tp = std::chrono::steady_clock::now();
-    bool should_refresh = true;
-    if (!use_mock_) {
-        // throttle to 10Hz when using real telemetry
-        should_refresh = (last_osd_update_time_ < 0.0f || last_osd_tp_.time_since_epoch().count() == 0 ||
-                          std::chrono::duration_cast<std::chrono::milliseconds>(now_tp - last_osd_tp_).count() >= 100);
+    // Always refresh telemetry every frame; mock needs full animation and real data is cheap enough at frame rate.
+    if (use_mock_) {
+        cached_telemetry_ = BuildMockTelemetry(state_);
+    } else if (telemetry_provider_) {
+        cached_telemetry_ = telemetry_provider_();
     }
-    if (should_refresh) {
-        if (use_mock_) {
-            cached_telemetry_ = BuildMockTelemetry(state_);
-        } else if (telemetry_provider_) {
-            cached_telemetry_ = telemetry_provider_();
-        }
-        last_osd_update_time_ = static_cast<float>(ImGui::GetTime());
-        last_osd_tp_ = now_tp;
+    last_osd_update_time_ = static_cast<float>(ImGui::GetTime());
+    last_osd_tp_ = now_tp;
+
+    // log at ~2Hz to avoid spamming
+    static auto last_log = std::chrono::steady_clock::time_point{};
+    if (last_log.time_since_epoch().count() == 0 ||
+        std::chrono::duration_cast<std::chrono::milliseconds>(now_tp - last_log).count() >= 500) {
         std::fprintf(stdout,
                      "[AMLgsMenu] Telemetry refresh t=%.3f roll=%.2f pitch=%.2f mock=%d\n",
                      last_osd_update_time_, cached_telemetry_.roll_deg, cached_telemetry_.pitch_deg,
                      use_mock_ ? 1 : 0);
         std::fflush(stdout);
+        last_log = now_tp;
     }
 
     DrawOsd(viewport, cached_telemetry_);
