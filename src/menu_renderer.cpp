@@ -283,30 +283,32 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
         ImGui::TextUnformatted(text);
     };
 
-    ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + 16.0f,
-                                   viewport->Pos.y + viewport->Size.y - 140.0f));
-    ImGui::SetNextWindowBgAlpha(0.0f);
-    if (data.has_gps && ImGui::Begin("OSD_GPS", nullptr, overlay_flags)) {
-        ImGui::PushStyleColor(ImGuiCol_Text, text_fill);
-        char gps_buf[128];
-        if (is_cn) {
-            snprintf(gps_buf, sizeof(gps_buf), "GPS: %.5f, %.5f, %.1fm",
-                     data.latitude, data.longitude, data.altitude_m);
-        } else {
-            snprintf(gps_buf, sizeof(gps_buf), "GPS: %.5f, %.5f, %.1fm",
-                     data.latitude, data.longitude, data.altitude_m);
+    if (data.has_gps) {
+        ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + 16.0f,
+                                       viewport->Pos.y + viewport->Size.y - 140.0f));
+        ImGui::SetNextWindowBgAlpha(0.0f);
+        if (ImGui::Begin("OSD_GPS", nullptr, overlay_flags)) {
+            ImGui::PushStyleColor(ImGuiCol_Text, text_fill);
+            char gps_buf[128];
+            if (is_cn) {
+                snprintf(gps_buf, sizeof(gps_buf), "GPS: %.5f, %.5f, %.1fm",
+                         data.latitude, data.longitude, data.altitude_m);
+            } else {
+                snprintf(gps_buf, sizeof(gps_buf), "GPS: %.5f, %.5f, %.1fm",
+                         data.latitude, data.longitude, data.altitude_m);
+            }
+            icon_text_line(gps_buf, icon_gps_);
+            char home_buf[64];
+            if (is_cn) {
+                snprintf(home_buf, sizeof(home_buf), "\u79bb\u5bb6\u8ddd\u79bb: %.1fm", data.home_distance_m);
+            } else {
+                snprintf(home_buf, sizeof(home_buf), "Home Dist: %.1fm", data.home_distance_m);
+            }
+            icon_text_line(home_buf, icon_gps_);
+            ImGui::PopStyleColor();
         }
-        icon_text_line(gps_buf, icon_gps_);
-        char home_buf[64];
-        if (is_cn) {
-            snprintf(home_buf, sizeof(home_buf), "\u79bb\u5bb6\u8ddd\u79bb: %.1fm", data.home_distance_m);
-        } else {
-            snprintf(home_buf, sizeof(home_buf), "Home Dist: %.1fm", data.home_distance_m);
-        }
-        icon_text_line(home_buf, icon_gps_);
-        ImGui::PopStyleColor();
+        ImGui::End();
     }
-    ImGui::End();
 
     ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + viewport->Size.x - 16.0f,
                                    viewport->Pos.y + viewport->Size.y - 48.0f),
@@ -324,30 +326,32 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
         }
         icon_text_line(video_buf, icon_monitor_);
         ImGui::PopStyleColor();
+        ImGui::End();
     }
-    ImGui::End();
 
-    ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + 16.0f, center.y - 24.0f));
-    ImGui::SetNextWindowBgAlpha(0.0f);
-    if (data.has_battery && ImGui::Begin("OSD_BATT", nullptr, overlay_flags)) {
-        ImGui::PushStyleColor(ImGuiCol_Text, text_fill);
-        char cell_buf[32];
-        if (is_cn) {
-            snprintf(cell_buf, sizeof(cell_buf), "\u5355\u8282: %.2fV", data.cell_voltage);
-        } else {
-            snprintf(cell_buf, sizeof(cell_buf), "Cell: %.2fV", data.cell_voltage);
+    if (data.has_battery) {
+        ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + 16.0f, center.y - 24.0f));
+        ImGui::SetNextWindowBgAlpha(0.0f);
+        if (ImGui::Begin("OSD_BATT", nullptr, overlay_flags)) {
+            ImGui::PushStyleColor(ImGuiCol_Text, text_fill);
+            char cell_buf[32];
+            if (is_cn) {
+                snprintf(cell_buf, sizeof(cell_buf), "\u5355\u8282: %.2fV", data.cell_voltage);
+            } else {
+                snprintf(cell_buf, sizeof(cell_buf), "Cell: %.2fV", data.cell_voltage);
+            }
+            icon_text_line(cell_buf, icon_batt_cell_);
+            char pack_buf[32];
+            if (is_cn) {
+                snprintf(pack_buf, sizeof(pack_buf), "\u603b\u7535: %.2fV", data.pack_voltage);
+            } else {
+                snprintf(pack_buf, sizeof(pack_buf), "Pack: %.2fV", data.pack_voltage);
+            }
+            icon_text_line(pack_buf, icon_batt_pack_);
+            ImGui::PopStyleColor();
+            ImGui::End();
         }
-        icon_text_line(cell_buf, icon_batt_cell_);
-        char pack_buf[32];
-        if (is_cn) {
-            snprintf(pack_buf, sizeof(pack_buf), "\u603b\u7535: %.2fV", data.pack_voltage);
-        } else {
-            snprintf(pack_buf, sizeof(pack_buf), "Pack: %.2fV", data.pack_voltage);
-        }
-        icon_text_line(pack_buf, icon_batt_pack_);
-        ImGui::PopStyleColor();
     }
-    ImGui::End();
 
     ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + viewport->Size.x - 16.0f, center.y - 24.0f),
                             ImGuiCond_Always, ImVec2(1.0f, 0.5f));
@@ -363,8 +367,8 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
         snprintf(ground_buf, sizeof(ground_buf), is_cn ? "\u5730\u9762\u7a7a\u7aef\u6e29\u5ea6: %.1f\u2103" : "Ground Temp: %.1fC", data.ground_temp_c);
         icon_text_line(ground_buf, icon_temp_ground_);
         ImGui::PopStyleColor();
+        ImGui::End();
     }
-    ImGui::End();
 }
 
 void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag) {
