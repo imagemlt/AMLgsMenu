@@ -1,0 +1,14 @@
+[Unit]
+Description=AMLgsMenu OSD
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/AMLgsMenu -t /storage/digitalfpv/fonts/YeZiGongChangGuaiJiaoHei-2.ttf
+Restart=on-failure
+RestartSec=2
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
