@@ -10,6 +10,7 @@ option(AML_ENABLE_GLES "Use OpenGL ES backends" ON)
 add_executable(AMLgsMenu
     src/application.cpp
     src/main.cpp
+    src/command_executor.cpp
     src/mavlink_receiver.cpp
     src/menu_renderer.cpp
     src/menu_state.cpp

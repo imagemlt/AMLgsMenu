@@ -98,6 +98,8 @@ bool Application::Initialize(const std::string &font_path, bool use_mock) {
         return false;
     }
     udp_client_ = std::make_unique<UdpCommandClient>();
+    cmd_runner_ = std::make_unique<CommandExecutor>();
+    cmd_runner_->Start();
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -239,6 +241,10 @@ void Application::Shutdown() {
         mav_receiver_->Stop();
         mav_receiver_.reset();
     }
+    if (cmd_runner_) {
+        cmd_runner_->Stop();
+        cmd_runner_.reset();
+    }
 
     ImGui_ImplOpenGL3_Shutdown();
     ImGui::DestroyContext();
@@ -349,9 +355,8 @@ void Application::ApplyLocalMonitorChannel(int channel) {
     std::ostringstream cmd;
     cmd << "sh -c 'for dev in $(iw dev 2>/dev/null | awk \"/Interface/ {name=$2} /type monitor/ {print name}\"); "
         << "do iw dev $dev set channel " << channel << "; done'";
-    int rc = std::system(cmd.str().c_str());
-    if (rc != 0) {
-        std::fprintf(stderr, "[AMLgsMenu] Local monitor channel set failed (rc=%d)\n", rc);
+    if (cmd_runner_) {
+        cmd_runner_->Enqueue(cmd.str());
     }
 }
 
@@ -361,9 +366,8 @@ void Application::ApplyLocalMonitorPower(int power_level) {
     std::ostringstream cmd;
     cmd << "sh -c 'for dev in $(iw dev 2>/dev/null | awk \"/Interface/ {name=$2} /type monitor/ {print name}\"); "
         << "do iw dev $dev set txpower fixed " << tx_pwr << "; done'";
-    int rc = std::system(cmd.str().c_str());
-    if (rc != 0) {
-        std::fprintf(stderr, "[AMLgsMenu] Local monitor txpower set failed (rc=%d)\n", rc);
+    if (cmd_runner_) {
+        cmd_runner_->Enqueue(cmd.str());
     }
 }
 

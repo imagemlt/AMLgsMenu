@@ -3,6 +3,7 @@
 #include "menu_renderer.h"
 #include "menu_state.h"
 #include "udp_command_client.h"
+#include "command_executor.h"
 
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
@@ -70,6 +71,7 @@ private:
     std::unique_ptr<MenuRenderer> renderer_;
     std::unique_ptr<class MavlinkReceiver> mav_receiver_;
     std::unique_ptr<UdpCommandClient> udp_client_;
+    std::unique_ptr<CommandExecutor> cmd_runner_;
     bool use_mock_ = false;
 
     std::unordered_map<std::string, std::string> config_kv_;
