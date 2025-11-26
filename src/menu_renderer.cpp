@@ -159,6 +159,8 @@ void MenuRenderer::Render(bool &running_flag) {
     bool need_refresh = (last_osd_update_time_ < 0.0f ||
                          last_osd_tp_.time_since_epoch().count() == 0 ||
                          std::chrono::duration_cast<std::chrono::milliseconds>(now_tp - last_osd_tp_).count() >= 100);
+    static uint64_t refresh_count = 0;
+    static auto last_refresh_log = std::chrono::steady_clock::now();
     if (need_refresh) {
         if (use_mock_) {
             cached_telemetry_ = BuildMockTelemetry(state_);
@@ -167,21 +169,20 @@ void MenuRenderer::Render(bool &running_flag) {
         }
         last_osd_update_time_ = static_cast<float>(ImGui::GetTime());
         last_osd_tp_ = now_tp;
+        ++refresh_count;
     }
 
-    static uint64_t osd_frame_counter = 0;
-    static auto last_osd_log = std::chrono::steady_clock::now();
-    ++osd_frame_counter;
     auto now = std::chrono::steady_clock::now();
-    auto ms_since_log = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_osd_log).count();
-    if (ms_since_log >= 10000) { // every 10s
-        std::fprintf(stdout, "[AMLgsMenu] OSD frames %llu in %lld ms (~%.2f FPS)\n",
-                     static_cast<unsigned long long>(osd_frame_counter),
+    auto ms_since_log = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_refresh_log).count();
+    if (ms_since_log >= 10000) { // every 10s, report effective OSD update rate
+        double fps = (refresh_count * 1000.0) / std::max<int64_t>(1, ms_since_log);
+        std::fprintf(stdout, "[AMLgsMenu] OSD telemetry updates %llu in %lld ms (~%.2f FPS)\n",
+                     static_cast<unsigned long long>(refresh_count),
                      static_cast<long long>(ms_since_log),
-                     (osd_frame_counter * 1000.0) / std::max(1LL, ms_since_log));
+                     fps);
         std::fflush(stdout);
-        osd_frame_counter = 0;
-        last_osd_log = now;
+        refresh_count = 0;
+        last_refresh_log = now;
     }
 
     DrawOsd(viewport, cached_telemetry_);
