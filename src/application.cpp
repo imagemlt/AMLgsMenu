@@ -4,6 +4,7 @@
 #include "backends/imgui_impl_opengl3.h"
 #include "video_mode.h"
 #include "mavlink_receiver.h"
+#include "udp_command_client.h"
 
 #include <EGL/egl.h>
 #include <algorithm>
@@ -34,7 +35,7 @@ MenuRenderer::TelemetryData ConvertTelemetry(const ParsedTelemetry &src, const M
         out.has_rc_signal = false;
     }
 
-    if (!src.flight_mode.empty()) {
+    if (src.has_flight_mode && !src.flight_mode.empty()) {
         out.flight_mode = src.flight_mode;
         out.has_flight_mode = true;
     } else {
@@ -95,6 +96,7 @@ bool Application::Initialize(const std::string &font_path, bool use_mock) {
         std::fprintf(stderr, "[AMLgsMenu] Failed to init libinput/udev\n");
         return false;
     }
+    udp_client_ = std::make_unique<UdpCommandClient>();
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -139,10 +141,12 @@ bool Application::Initialize(const std::string &font_path, bool use_mock) {
         switch (type) {
         case MenuState::SettingType::Channel:
             SaveConfigValue("channel", std::to_string(menu_state_->Channels()[menu_state_->ChannelIndex()]));
+            ApplyChannel();
             break;
         case MenuState::SettingType::Bandwidth:
             SaveConfigValue("bandwidth", std::to_string((menu_state_->BandwidthIndex() == 0) ? 10 :
                                                         (menu_state_->BandwidthIndex() == 1) ? 20 : 40));
+            ApplyBandwidth();
             break;
         case MenuState::SettingType::GroundMode: {
             // update ground_res and clean legacy typo
@@ -150,8 +154,17 @@ bool Application::Initialize(const std::string &font_path, bool use_mock) {
             SaveConfigValue("ground_res", menu_state_->GroundModes()[menu_state_->GroundModeIndex()].label);
             break;
         }
+        case MenuState::SettingType::SkyMode:
+            ApplySkyMode();
+            break;
         case MenuState::SettingType::GroundPower:
             SaveConfigValue("driver_txpower_override", std::to_string(menu_state_->PowerLevels()[menu_state_->GroundPowerIndex()]));
+            break;
+        case MenuState::SettingType::Bitrate:
+            ApplyBitrate();
+            break;
+        case MenuState::SettingType::SkyPower:
+            ApplySkyPower();
             break;
         case MenuState::SettingType::Language: {
             auto lang = menu_state_->GetLanguage();
@@ -254,6 +267,69 @@ void Application::Shutdown() {
     if (fb_.fd >= 0) {
         close(fb_.fd);
         fb_.fd = -1;
+    }
+}
+
+void Application::ApplyChannel() {
+    if (!udp_client_) return;
+    const auto &chs = menu_state_->Channels();
+    if (chs.empty()) return;
+    int ch = chs[menu_state_->ChannelIndex()];
+    std::ostringstream cmd;
+    cmd << "sed -i 's/channel=.*$/channel=" << ch << "/' /etc/wfb.conf && iwconfig wlan0 channel " << ch;
+    if (!udp_client_->Send(cmd.str(), false)) {
+        std::fprintf(stderr, "[AMLgsMenu] Failed to send channel command\n");
+    }
+}
+
+void Application::ApplyBandwidth() {
+    if (!udp_client_) return;
+    int bw = (menu_state_->BandwidthIndex() == 0) ? 10 : (menu_state_->BandwidthIndex() == 1 ? 20 : 40);
+    std::ostringstream cmd;
+    cmd << "sed -i 's/bandwidth=.*$/bandwidth=" << bw << "/' /etc/wfb.conf";
+    if (!udp_client_->Send(cmd.str(), false)) {
+        std::fprintf(stderr, "[AMLgsMenu] Failed to send bandwidth command\n");
+    }
+}
+
+void Application::ApplySkyMode() {
+    if (!udp_client_) return;
+    const auto &sky_modes = menu_state_->SkyModes();
+    if (sky_modes.empty()) return;
+    VideoMode mode = sky_modes[menu_state_->SkyModeIndex()];
+    std::ostringstream cmd;
+    cmd << "cli -s .video0.size " << mode.width << "x" << mode.height
+        << " && cli -s .video0.fps " << (mode.refresh ? mode.refresh : 60)
+        << " && killall -1 majestic";
+    if (!udp_client_->Send(cmd.str(), false)) {
+        std::fprintf(stderr, "[AMLgsMenu] Failed to send sky mode command\n");
+    }
+}
+
+void Application::ApplyBitrate() {
+    if (!udp_client_) return;
+    const auto &bitrates = menu_state_->Bitrates();
+    if (bitrates.empty()) return;
+    int br = bitrates[menu_state_->BitrateIndex()];
+    std::ostringstream cmd;
+    cmd << "cli -s .video0.bitrate " << br
+        << " && curl -s 'http://localhost/api/v1/set?video0.bitrate=" << br << "'";
+    if (!udp_client_->Send(cmd.str(), false)) {
+        std::fprintf(stderr, "[AMLgsMenu] Failed to send bitrate command\n");
+    }
+}
+
+void Application::ApplySkyPower() {
+    if (!udp_client_) return;
+    const auto &powers = menu_state_->PowerLevels();
+    if (powers.empty()) return;
+    int p = powers[menu_state_->SkyPowerIndex()];
+    int tx_pwr = p * 50;
+    std::ostringstream cmd;
+    cmd << "sed -i 's/driver_txpower_override=.*$/driver_txpower_override=" << p
+        << "/' /etc/wfb.conf && iw dev wlan0 set txpower fixed " << tx_pwr;
+    if (!udp_client_->Send(cmd.str(), false)) {
+        std::fprintf(stderr, "[AMLgsMenu] Failed to send tx power command\n");
     }
 }
 

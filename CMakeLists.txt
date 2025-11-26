@@ -14,6 +14,7 @@ add_executable(AMLgsMenu
     src/menu_renderer.cpp
     src/menu_state.cpp
     src/video_mode.cpp
+    src/udp_command_client.cpp
 )
 
 if(AML_ENABLE_GLES)

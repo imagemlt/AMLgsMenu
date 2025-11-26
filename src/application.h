@@ -2,6 +2,7 @@
 
 #include "menu_renderer.h"
 #include "menu_state.h"
+#include "udp_command_client.h"
 
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
@@ -45,6 +46,11 @@ private:
     int FindPowerIndex(int power_val) const;
     int FindGroundModeIndex(const std::string &label) const;
     void ApplyLanguageToImGui(MenuState::Language lang);
+    void ApplyChannel();
+    void ApplyBandwidth();
+    void ApplySkyMode();
+    void ApplyBitrate();
+    void ApplySkyPower();
 
     FbContext fb_{};
     EGLDisplay egl_display_ = EGL_NO_DISPLAY;
@@ -60,6 +66,7 @@ private:
     std::unique_ptr<MenuState> menu_state_;
     std::unique_ptr<MenuRenderer> renderer_;
     std::unique_ptr<class MavlinkReceiver> mav_receiver_;
+    std::unique_ptr<UdpCommandClient> udp_client_;
     bool use_mock_ = false;
 
     std::unordered_map<std::string, std::string> config_kv_;
