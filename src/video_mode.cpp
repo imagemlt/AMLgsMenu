@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <sstream>
+#include <chrono>
 
 namespace {
 VideoMode MakeModeFromLegacy(int height, int refresh, const std::string &label) {
@@ -106,16 +107,27 @@ int GetOutputFps(const std::string &path) {
 }
 
 float ReadTemperatureC(const std::string &path) {
+    static auto last_read = std::chrono::steady_clock::time_point{};
+    static float cached = 0.0f;
+
+    auto now = std::chrono::steady_clock::now();
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_read).count();
+    const bool need_read = (last_read.time_since_epoch().count() == 0 || ms >= 1000);
+    if (!need_read) {
+        return cached;
+    }
+
     std::ifstream file(path);
     if (!file.is_open()) {
-        return 0.0f;
+        return cached;
     }
     int milli = 0;
     file >> milli;
-    float c = static_cast<float>(milli) / 1000.0f;
-    std::fprintf(stdout, "[AMLgsMenu] Read temperature %s -> %.2fC\n", path.c_str(), c);
+    cached = static_cast<float>(milli) / 1000.0f;
+    last_read = now;
+    std::fprintf(stdout, "[AMLgsMenu] Read temperature %s -> %.2fC\n", path.c_str(), cached);
     std::fflush(stdout);
-    return c;
+    return cached;
 }
 
 std::vector<VideoMode> DefaultSkyModes() {
