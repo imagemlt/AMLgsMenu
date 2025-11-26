@@ -208,6 +208,17 @@ void MenuRenderer::Render(bool &running_flag) {
         last_osd_tp_ = now_tp;
     }
 
+    // Limit OSD render to ~20 FPS when menu is hidden; menu stays full rate.
+    if (!state_.MenuVisible()) {
+        if (last_render_tp_.time_since_epoch().count() != 0) {
+            auto ms_since = std::chrono::duration_cast<std::chrono::milliseconds>(now_tp - last_render_tp_).count();
+            if (ms_since < 50) {
+                return; // skip this frame to cap ~20fps
+            }
+        }
+    }
+    last_render_tp_ = now_tp;
+
     DrawOsd(viewport, cached_telemetry_);
 
     ImGuiIO &io = ImGui::GetIO();
