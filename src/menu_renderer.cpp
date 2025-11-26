@@ -326,8 +326,8 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
         }
         icon_text_line(video_buf, icon_monitor_);
         ImGui::PopStyleColor();
-        ImGui::End();
     }
+    ImGui::End();
 
     if (data.has_battery) {
         ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + 16.0f, center.y - 24.0f));
@@ -349,8 +349,8 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
             }
             icon_text_line(pack_buf, icon_batt_pack_);
             ImGui::PopStyleColor();
-            ImGui::End();
         }
+        ImGui::End();
     }
 
     ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + viewport->Size.x - 16.0f, center.y - 24.0f),
@@ -367,8 +367,8 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
         snprintf(ground_buf, sizeof(ground_buf), is_cn ? "\u5730\u9762\u7a7a\u7aef\u6e29\u5ea6: %.1f\u2103" : "Ground Temp: %.1fC", data.ground_temp_c);
         icon_text_line(ground_buf, icon_temp_ground_);
         ImGui::PopStyleColor();
-        ImGui::End();
     }
+    ImGui::End();
 }
 
 void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag) {
