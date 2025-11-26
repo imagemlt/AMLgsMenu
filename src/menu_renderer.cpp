@@ -383,7 +383,7 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
             icon_text_line(sky_buf, icon_temp_air_);
         }
         char ground_buf[32];
-        snprintf(ground_buf, sizeof(ground_buf), is_cn ? "\u5730\u9762\u7a7a\u7aef\u6e29\u5ea6: %.1f\u2103" : "Ground Temp: %.1fC", data.ground_temp_c);
+        snprintf(ground_buf, sizeof(ground_buf), is_cn ? "\u5730\u9762\u7aef\u6e29\u5ea6: %.1f\u2103" : "Ground Temp: %.1fC", data.ground_temp_c);
         icon_text_line(ground_buf, icon_temp_ground_);
         ImGui::PopStyleColor();
     }
