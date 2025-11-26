@@ -125,8 +125,6 @@ float ReadTemperatureC(const std::string &path) {
     file >> milli;
     cached = static_cast<float>(milli) / 1000.0f;
     last_read = now;
-    std::fprintf(stdout, "[AMLgsMenu] Read temperature %s -> %.2fC\n", path.c_str(), cached);
-    std::fflush(stdout);
     return cached;
 }
 
