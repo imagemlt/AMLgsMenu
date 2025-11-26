@@ -45,6 +45,8 @@ void CommandExecutor::ThreadFunc() {
             cmd = queue_.front();
             queue_.pop();
         }
+        std::fprintf(stdout, "[AMLgsMenu] exec: %s\n", cmd.c_str());
+        std::fflush(stdout);
         int rc = std::system(cmd.c_str());
         if (rc != 0) {
             std::fprintf(stderr, "[AMLgsMenu] Command failed (rc=%d): %s\n", rc, cmd.c_str());
