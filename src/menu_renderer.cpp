@@ -242,8 +242,8 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
     };
 
     if (!use_mock_ && !has_mavlink_data_) {
-        // show NO MAVLINK notice, then early out
-        const char *msg = is_cn ? "NO MAVLINK" : "NO MAVLINK";
+        // show WAITING notice, then early out
+        const char *msg = is_cn ? "WAITING" : "WAITING";
         ImVec2 pos(viewport->Pos.x + 12.0f, viewport->Pos.y + 12.0f);
         float small = ImGui::GetFontSize() * 0.85f;
         draw_list->AddText(ImGui::GetFont(), small, ImVec2(pos.x + 1, pos.y + 1), text_outline, msg);

@@ -52,6 +52,7 @@ private:
     float last_osd_update_time_ = -1.0f;
     std::chrono::steady_clock::time_point last_osd_tp_{};
     bool has_mavlink_data_ = false;
+    bool has_mavlink_data_ = false;
     ImTextureID icon_antenna_{};
     ImTextureID icon_batt_cell_{};
     ImTextureID icon_batt_pack_{};
