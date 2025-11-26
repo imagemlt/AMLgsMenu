@@ -201,6 +201,11 @@ void MenuRenderer::Render(bool &running_flag) {
                 new_data.bitrate_mbps = cached_telemetry_.bitrate_mbps;
             } else {
                 last_ground_sample = now_tp;
+                std::fprintf(stdout,
+                             "[AMLgsMenu] Ground sample: A=%.1f dBm B=%.1f dBm temp=%.1fC res=%s @ %dHz bitrate=%.1f Mbps\n",
+                             new_data.ground_signal_a, new_data.ground_signal_b, new_data.ground_temp_c,
+                             new_data.video_resolution.c_str(), new_data.video_refresh_hz, new_data.bitrate_mbps);
+                std::fflush(stdout);
             }
         }
         cached_telemetry_ = new_data;
