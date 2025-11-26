@@ -13,12 +13,12 @@ public:
         float ground_signal_a = 0.0f;
         float ground_signal_b = 0.0f;
         float rc_signal = 0.0f;
-        bool has_rc_signal = true;
-        bool has_flight_mode = true;
-        bool has_attitude = true;
-        bool has_gps = true;
-        bool has_battery = true;
-        bool has_sky_temp = true;
+        bool has_rc_signal = false;
+        bool has_flight_mode = false;
+        bool has_attitude = false;
+        bool has_gps = false;
+        bool has_battery = false;
+        bool has_sky_temp = false;
         std::string flight_mode;
         double latitude = 0.0;
         double longitude = 0.0;

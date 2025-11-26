@@ -159,30 +159,30 @@ void MenuRenderer::Render(bool &running_flag) {
     bool need_refresh = (last_osd_update_time_ < 0.0f ||
                          last_osd_tp_.time_since_epoch().count() == 0 ||
                          std::chrono::duration_cast<std::chrono::milliseconds>(now_tp - last_osd_tp_).count() >= 100);
-    static uint64_t refresh_count = 0;
-    static auto last_refresh_log = std::chrono::steady_clock::now();
     if (need_refresh) {
+        TelemetryData new_data = cached_telemetry_;
         if (use_mock_) {
-            cached_telemetry_ = BuildMockTelemetry(state_);
+            new_data = BuildMockTelemetry(state_);
         } else if (telemetry_provider_) {
-            cached_telemetry_ = telemetry_provider_();
+            new_data = telemetry_provider_();
+
+            static auto last_ground_sample = std::chrono::steady_clock::time_point{};
+            auto ms_ground = std::chrono::duration_cast<std::chrono::milliseconds>(now_tp - last_ground_sample).count();
+            const bool update_ground = (last_ground_sample.time_since_epoch().count() == 0 || ms_ground >= 1000);
+            if (!update_ground) {
+                new_data.ground_signal_a = cached_telemetry_.ground_signal_a;
+                new_data.ground_signal_b = cached_telemetry_.ground_signal_b;
+                new_data.ground_temp_c = cached_telemetry_.ground_temp_c;
+                new_data.video_refresh_hz = cached_telemetry_.video_refresh_hz;
+                new_data.video_resolution = cached_telemetry_.video_resolution;
+                new_data.bitrate_mbps = cached_telemetry_.bitrate_mbps;
+            } else {
+                last_ground_sample = now_tp;
+            }
         }
+        cached_telemetry_ = new_data;
         last_osd_update_time_ = static_cast<float>(ImGui::GetTime());
         last_osd_tp_ = now_tp;
-        ++refresh_count;
-    }
-
-    auto now = std::chrono::steady_clock::now();
-    auto ms_since_log = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_refresh_log).count();
-    if (ms_since_log >= 10000) { // every 10s, report effective OSD update rate
-        double fps = (refresh_count * 1000.0) / std::max<int64_t>(1, ms_since_log);
-        std::fprintf(stdout, "[AMLgsMenu] OSD telemetry updates %llu in %lld ms (~%.2f FPS)\n",
-                     static_cast<unsigned long long>(refresh_count),
-                     static_cast<long long>(ms_since_log),
-                     fps);
-        std::fflush(stdout);
-        refresh_count = 0;
-        last_refresh_log = now;
     }
 
     DrawOsd(viewport, cached_telemetry_);
@@ -237,8 +237,6 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
     };
     if (data.has_attitude) {
         draw_horizon(data.roll_deg, data.pitch_deg);
-    } else {
-        draw_horizon(0.0f, 0.0f);
     }
 
     auto draw_centered_text = [&](ImVec2 pos, const std::string &text, ImU32 color, ImTextureID tex) {
@@ -258,23 +256,24 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
         draw_list->AddText(text_pos, color, text.c_str());
     };
 
-    std::ostringstream signal;
-    if (is_cn) {
-        signal << "\u5730\u9762A: " << static_cast<int>(data.ground_signal_a) << " dBm  |  "
-               << "\u5730\u9762B: " << static_cast<int>(data.ground_signal_b) << " dBm";
-        if (data.has_rc_signal) {
-            signal << "  |  RC: " << static_cast<int>(data.rc_signal) << " dBm";
+    if (data.has_rc_signal || data.ground_signal_a != 0.0f || data.ground_signal_b != 0.0f) {
+        std::ostringstream signal;
+        if (is_cn) {
+            signal << "\u5730\u9762A: " << static_cast<int>(data.ground_signal_a) << " dBm  |  "
+                   << "\u5730\u9762B: " << static_cast<int>(data.ground_signal_b) << " dBm";
+            if (data.has_rc_signal) {
+                signal << "  |  RC: " << static_cast<int>(data.rc_signal) << " dBm";
+            }
+        } else {
+            signal << "GND A: " << static_cast<int>(data.ground_signal_a) << " dBm  |  "
+                   << "GND B: " << static_cast<int>(data.ground_signal_b) << " dBm";
+            if (data.has_rc_signal) {
+                signal << "  |  RC: " << static_cast<int>(data.rc_signal) << " dBm";
+            }
         }
-    } else {
-        signal << "GND A: " << static_cast<int>(data.ground_signal_a) << " dBm  |  "
-               << "GND B: " << static_cast<int>(data.ground_signal_b) << " dBm";
-        if (data.has_rc_signal) {
-            signal << "  |  RC: " << static_cast<int>(data.rc_signal) << " dBm";
-        }
+        draw_centered_text(ImVec2(center.x, viewport->Pos.y + viewport->Size.y * 0.05f),
+                           signal.str(), text_fill, icon_antenna_);
     }
-    // Place signals near top center with a small margin
-    draw_centered_text(ImVec2(center.x, viewport->Pos.y + viewport->Size.y * 0.05f),
-                       signal.str(), text_fill, icon_antenna_);
 
     if (data.has_flight_mode) {
         ImFont *font = ImGui::GetFont();
