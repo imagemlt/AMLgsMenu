@@ -71,11 +71,6 @@ static MenuRenderer::TelemetryData BuildMockTelemetry(const MenuState &state) {
         ground_cache.bitrate_mbps = std::max(1.0f, 6.0f + 2.0f * std::sin(t * 0.4f));
 
         last_ground_sample = now_tp;
-        std::fprintf(stdout,
-                     "[AMLgsMenu] Ground sample: A=%.1f dBm B=%.1f dBm temp=%.1fC res=%s @ %dHz bitrate=%.1f Mbps\n",
-                     ground_cache.ground_signal_a, ground_cache.ground_signal_b, ground_cache.ground_temp_c,
-                     ground_cache.video_resolution.c_str(), ground_cache.video_refresh_hz, ground_cache.bitrate_mbps);
-        std::fflush(stdout);
     }
 
     data.ground_signal_a = ground_cache.ground_signal_a;
