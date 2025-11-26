@@ -214,8 +214,7 @@ void MenuRenderer::Render(bool &running_flag) {
         if (last_render_tp_.time_since_epoch().count() != 0) {
             auto ms_since = std::chrono::duration_cast<std::chrono::milliseconds>(now_tp - last_render_tp_).count();
             if (ms_since < 50) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(50 - ms_since));
-                now_tp = std::chrono::steady_clock::now();
+                return; // skip frame to cap ~20fps without extra clears
             }
         }
     }
