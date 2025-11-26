@@ -165,6 +165,11 @@ void MenuRenderer::Render(bool &running_flag) {
         }
         last_osd_update_time_ = static_cast<float>(ImGui::GetTime());
         last_osd_tp_ = now_tp;
+        std::fprintf(stdout,
+                     "[AMLgsMenu] Telemetry refresh t=%.3f roll=%.2f pitch=%.2f mock=%d\n",
+                     last_osd_update_time_, cached_telemetry_.roll_deg, cached_telemetry_.pitch_deg,
+                     use_mock_ ? 1 : 0);
+        std::fflush(stdout);
     }
 
     DrawOsd(viewport, cached_telemetry_);
