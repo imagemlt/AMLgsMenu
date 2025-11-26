@@ -3,6 +3,7 @@
 #include "imgui.h"
 #include "backends/imgui_impl_opengl3.h"
 #include "video_mode.h"
+#include "mavlink_receiver.h"
 
 #include <EGL/egl.h>
 #include <algorithm>
@@ -19,7 +20,69 @@
 Application::Application() = default;
 Application::~Application() { Shutdown(); }
 
-bool Application::Initialize(const std::string &font_path) {
+namespace {
+MenuRenderer::TelemetryData ConvertTelemetry(const ParsedTelemetry &src, const MenuState &state) {
+    MenuRenderer::TelemetryData out{};
+    // Signals: map RC RSSI (0-255) to a rough dBm-ish scale
+    if (src.has_radio_rssi) {
+        float rc_dbm = -100.0f + static_cast<float>(src.rc_rssi) * 0.4f;
+        out.rc_signal = rc_dbm;
+        out.ground_signal_a = rc_dbm;
+        out.ground_signal_b = rc_dbm;
+        out.has_rc_signal = true;
+    } else {
+        out.has_rc_signal = false;
+    }
+
+    if (!src.flight_mode.empty()) {
+        out.flight_mode = src.flight_mode;
+        out.has_flight_mode = true;
+    } else {
+        out.has_flight_mode = false;
+    }
+    out.has_attitude = src.has_attitude;
+    out.roll_deg = src.roll_deg;
+    out.pitch_deg = src.pitch_deg;
+
+    out.has_gps = src.has_gps;
+    if (src.has_gps) {
+        out.latitude = src.latitude;
+        out.longitude = src.longitude;
+        out.altitude_m = src.altitude_m;
+        out.home_distance_m = src.home_distance_m;
+    }
+
+    out.has_battery = src.has_battery;
+    if (src.has_battery) {
+        out.pack_voltage = src.batt_voltage_v;
+        out.cell_voltage = src.batt_voltage_v > 0.1f ? src.batt_voltage_v / 4.0f : 0.0f; // assume 4S if unknown
+    }
+
+    out.has_sky_temp = src.has_sky_temp;
+    out.sky_temp_c = src.sky_temp_c;
+    out.ground_temp_c = ReadTemperatureC();
+
+    if (src.has_video_metrics) {
+        out.bitrate_mbps = src.video_bitrate_mbps;
+        out.video_resolution = src.video_resolution;
+        out.video_refresh_hz = src.video_refresh_hz;
+    } else {
+        const auto &ground_modes = state.GroundModes();
+        VideoMode mode = ground_modes.empty() ? VideoMode{"1920x1080 @ 60Hz", 1920, 1080, 60}
+                                              : ground_modes[state.GroundModeIndex() % ground_modes.size()];
+        std::ostringstream res;
+        res << mode.width << "x" << mode.height;
+        out.video_resolution = res.str();
+        out.video_refresh_hz = mode.refresh ? mode.refresh : 60;
+        out.bitrate_mbps = 0.0f;
+    }
+
+    return out;
+}
+} // namespace
+
+bool Application::Initialize(const std::string &font_path, bool use_mock) {
+    use_mock_ = use_mock;
     if (!InitFramebuffer(fb_)) {
         std::fprintf(stderr, "[AMLgsMenu] Failed to init framebuffer (/dev/fb0)\n");
         return false;
@@ -58,7 +121,19 @@ bool Application::Initialize(const std::string &font_path) {
     menu_state_ = std::make_unique<MenuState>(sky_modes, ground_modes);
     LoadConfig();
     ApplyLanguageToImGui(menu_state_->GetLanguage());
-    renderer_ = std::make_unique<MenuRenderer>(*menu_state_);
+    if (!use_mock_) {
+        mav_receiver_ = std::make_unique<MavlinkReceiver>();
+        mav_receiver_->Start();
+    }
+
+    std::function<MenuRenderer::TelemetryData()> provider;
+    if (!use_mock_ && mav_receiver_) {
+        provider = [this]() {
+            return ConvertTelemetry(mav_receiver_->Latest(), *menu_state_);
+        };
+    }
+
+    renderer_ = std::make_unique<MenuRenderer>(*menu_state_, use_mock_, provider);
 
     menu_state_->SetOnChangeCallback([this](MenuState::SettingType type) {
         switch (type) {
@@ -125,6 +200,11 @@ void Application::Shutdown() {
 
     initialized_ = false;
     running_ = false;
+
+    if (mav_receiver_) {
+        mav_receiver_->Stop();
+        mav_receiver_.reset();
+    }
 
     ImGui_ImplOpenGL3_Shutdown();
     ImGui::DestroyContext();

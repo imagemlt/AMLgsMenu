@@ -13,13 +13,14 @@
 #include <unordered_map>
 #include <memory>
 #include <string>
+#include <functional>
 
 class Application {
 public:
     Application();
     ~Application();
 
-    bool Initialize(const std::string &font_path = "");
+    bool Initialize(const std::string &font_path = "", bool use_mock = false);
     void Run();
     void Shutdown();
 
@@ -58,6 +59,8 @@ private:
 
     std::unique_ptr<MenuState> menu_state_;
     std::unique_ptr<MenuRenderer> renderer_;
+    std::unique_ptr<class MavlinkReceiver> mav_receiver_;
+    bool use_mock_ = false;
 
     std::unordered_map<std::string, std::string> config_kv_;
     const std::string config_path_ = "/flash/wfb.conf";

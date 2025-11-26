@@ -64,7 +64,8 @@ static MenuRenderer::TelemetryData BuildMockTelemetry(const MenuState &state) {
     return data;
 }
 
-MenuRenderer::MenuRenderer(MenuState &state) : state_(state) {
+MenuRenderer::MenuRenderer(MenuState &state, bool use_mock, std::function<TelemetryData()> provider)
+    : state_(state), use_mock_(use_mock), telemetry_provider_(std::move(provider)) {
     int w = 0, h = 0;
     const char *icon_base = "/storage/digitalfpv/icons/";
     LoadIcon(std::string(icon_base + std::string("antenna.png")).c_str(), icon_antenna_, w, h);
@@ -156,7 +157,11 @@ void MenuRenderer::Render(bool &running_flag) {
     const ImGuiViewport *viewport = ImGui::GetMainViewport();
     const float now = static_cast<float>(ImGui::GetTime());
     if (last_osd_update_time_ < 0.0f || (now - last_osd_update_time_) >= 0.1f) {
-        cached_telemetry_ = BuildMockTelemetry(state_);
+        if (use_mock_) {
+            cached_telemetry_ = BuildMockTelemetry(state_);
+        } else if (telemetry_provider_) {
+            cached_telemetry_ = telemetry_provider_();
+        }
         last_osd_update_time_ = now;
     }
 

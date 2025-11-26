@@ -3,11 +3,12 @@
 #include "menu_state.h"
 
 #include "imgui.h"
+#include <functional>
 #include <vector>
 
 class MenuRenderer {
 public:
-    explicit MenuRenderer(MenuState &state);
+    MenuRenderer(MenuState &state, bool use_mock, std::function<TelemetryData()> provider);
     ~MenuRenderer();
 
     void Render(bool &running_flag);
@@ -43,6 +44,8 @@ private:
     bool LoadIcon(const char *path, ImTextureID &out_id, int &out_w, int &out_h);
 
     MenuState &state_;
+    bool use_mock_ = true;
+    std::function<TelemetryData()> telemetry_provider_;
     TelemetryData cached_telemetry_{};
     float last_osd_update_time_ = -1.0f;
     ImTextureID icon_antenna_{};
