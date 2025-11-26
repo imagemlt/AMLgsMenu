@@ -51,6 +51,9 @@ private:
     void ApplySkyMode();
     void ApplyBitrate();
     void ApplySkyPower();
+    void ApplyGroundPower();
+    void ApplyLocalMonitorChannel(int channel);
+    void ApplyLocalMonitorPower(int power_level);
 
     FbContext fb_{};
     EGLDisplay egl_display_ = EGL_NO_DISPLAY;

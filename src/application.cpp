@@ -8,6 +8,7 @@
 
 #include <EGL/egl.h>
 #include <algorithm>
+#include <cstdlib>
 #include <cstdio>
 #include <fcntl.h>
 #include <fstream>
@@ -159,6 +160,7 @@ bool Application::Initialize(const std::string &font_path, bool use_mock) {
             break;
         case MenuState::SettingType::GroundPower:
             SaveConfigValue("driver_txpower_override", std::to_string(menu_state_->PowerLevels()[menu_state_->GroundPowerIndex()]));
+            ApplyGroundPower();
             break;
         case MenuState::SettingType::Bitrate:
             ApplyBitrate();
@@ -280,6 +282,7 @@ void Application::ApplyChannel() {
     if (!udp_client_->Send(cmd.str(), false)) {
         std::fprintf(stderr, "[AMLgsMenu] Failed to send channel command\n");
     }
+    ApplyLocalMonitorChannel(ch);
 }
 
 void Application::ApplyBandwidth() {
@@ -331,6 +334,36 @@ void Application::ApplySkyPower() {
         << "/' /etc/wfb.conf && iw dev wlan0 set txpower fixed " << tx_pwr;
     if (!udp_client_->Send(cmd.str(), false)) {
         std::fprintf(stderr, "[AMLgsMenu] Failed to send tx power command\n");
+    }
+}
+
+void Application::ApplyGroundPower() {
+    const auto &powers = menu_state_->PowerLevels();
+    if (powers.empty()) return;
+    int p = powers[menu_state_->GroundPowerIndex()];
+    ApplyLocalMonitorPower(p);
+}
+
+void Application::ApplyLocalMonitorChannel(int channel) {
+    if (channel <= 0) return;
+    std::ostringstream cmd;
+    cmd << "sh -c 'for dev in $(iw dev 2>/dev/null | awk \"/Interface/ {name=$2} /type monitor/ {print name}\"); "
+        << "do iw dev $dev set channel " << channel << "; done'";
+    int rc = std::system(cmd.str().c_str());
+    if (rc != 0) {
+        std::fprintf(stderr, "[AMLgsMenu] Local monitor channel set failed (rc=%d)\n", rc);
+    }
+}
+
+void Application::ApplyLocalMonitorPower(int power_level) {
+    if (power_level <= 0) return;
+    int tx_pwr = power_level * 50;
+    std::ostringstream cmd;
+    cmd << "sh -c 'for dev in $(iw dev 2>/dev/null | awk \"/Interface/ {name=$2} /type monitor/ {print name}\"); "
+        << "do iw dev $dev set txpower fixed " << tx_pwr << "; done'";
+    int rc = std::system(cmd.str().c_str());
+    if (rc != 0) {
+        std::fprintf(stderr, "[AMLgsMenu] Local monitor txpower set failed (rc=%d)\n", rc);
     }
 }
 
