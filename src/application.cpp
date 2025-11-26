@@ -201,7 +201,7 @@ void Application::Run() {
         ++frame_counter;
         auto now = std::chrono::steady_clock::now();
         auto ms_since_log = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_log).count();
-        if (ms_since_log >= 500) {
+        if (ms_since_log >= 30000) { // log every 30s to reduce noise
             auto ms_swap = std::chrono::duration_cast<std::chrono::milliseconds>(now - before_swap).count();
             std::fprintf(stdout, "[AMLgsMenu] Frame %llu swap done (swap ms=%lld)\n",
                          static_cast<unsigned long long>(frame_counter),
