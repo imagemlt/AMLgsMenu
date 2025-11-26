@@ -25,7 +25,7 @@ void MavlinkReceiver::Start() {
     }
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    addr.sin_addr.s_addr = htonl(INADDR_ANY); // 0.0.0.0
     addr.sin_port = htons(port_);
     if (bind(sock_, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) < 0) {
         close(sock_);
