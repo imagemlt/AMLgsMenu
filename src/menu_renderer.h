@@ -8,10 +8,6 @@
 
 class MenuRenderer {
 public:
-    MenuRenderer(MenuState &state, bool use_mock, std::function<TelemetryData()> provider);
-    ~MenuRenderer();
-
-    void Render(bool &running_flag);
     struct TelemetryData {
         float ground_signal_a = 0.0f;
         float ground_signal_b = 0.0f;
@@ -37,6 +33,11 @@ public:
         float roll_deg = 0.0f;
         float pitch_deg = 0.0f;
     };
+
+    MenuRenderer(MenuState &state, bool use_mock, std::function<TelemetryData()> provider);
+    ~MenuRenderer();
+
+    void Render(bool &running_flag);
 
 private:
     void DrawOsd(const ImGuiViewport *viewport, const TelemetryData &data) const;
