@@ -1,63 +1,57 @@
 # AMLgsMenu
 
-针对仅提供 OpenGL ES + fbdev 的 Amlogic 平台的无线链路配置/OSD 原型。应用使用 SDL2 负责输入和窗口，Dear ImGui 的 GLES2 后端绘制透明叠加层。底层视频由专用 video 层呈现，本程序的背景保持透明避免遮挡。
+透明 OSD 与配置菜单，面向仅有 GLES + fbdev 的 Amlogic 平台。使用 EGL/GLES2 + libinput，ImGui 为子模块；背景全透明，菜单区域不透明。
 
 ## 特性
-- 透明叠加，菜单居中占屏幕约 1/4 区域，可随时显示/隐藏。
-- 下拉选择：信道(34–179)、频宽(10/20/40 MHz)、码率(1–50 Mbps)、天空/地面功率(1–60)。
-- 分辨率/刷新率：天空端使用默认列表，地面端自动读取 `/sys/class/amhdmitx/amhdmitx0/modes`，无模式时回落到默认值。
-- 录制开/关按钮与退出按钮；右键或手柄 **X** 键唤出/关闭菜单。
-- OSD mock 数据：中心水平线、信号强度、飞行模式、GPS+离家距离、视频码率/分辨率/刷新率、电池/温度信息，图标位置已预留占位（当前为绘制方块）。
+- OSD（MAVLink 或 mock）：地平线、信号强度（dBm）、飞行模式、GPS+离家距离、视频码率/分辨率/刷新率、电池、天空/地面温度。未收到 MAVLink（且非 mock）时左上角小字 “WAITING”，其余元素不显示飞行模式。
+- 信道：2.4G 1–13，5G {32,36,40,44,48,52,56,60,64,68,96,100,104,108,112,116,120,124,128,132,136,140,144,149,153,157,161,165,169,173,177}；频宽 10/20/40 MHz。
+- 天空分辨率：1280x720@120，1920x1080@90，1920x1080@60，2240x1260@60，3200x1800@30，3840x2160@20。地面分辨率自动读取 `/sys/class/amhdmitx/amhdmitx0/modes`，无则回退默认。
+- 命令行：`-t 字体.ttf`（推荐粗体全字库），`-m 1` 强制 mock；默认 MAVLink 监听 0.0.0.0:14450 UDP。
+- UDP 配置下发（单向）到 127.0.0.1:14650/14651：信道、频宽、天空分辨率/帧率（重启 majestic）、码率（Mbps→kbps）、天空功率（p*50 mBm）。本地 monitor 网卡同步信道/功率，带 HT20/HT40+ 后缀，无 monitor 时跳过。
+- 图标默认路径 `/storage/digitalfpv/icons/`（建议透明 48x48 PNG）。文字白色黑描边；菜单不透明，OSD 纯透明背景。
 
 ## 运行
-在构建目录：
 ```bash
-./aml_gs_menu          # 默认字体
-./aml_gs_menu -t /path/to/font.ttf   # 指定字体
+./AMLgsMenu                # 默认字体
+./AMLgsMenu -t 字体.ttf    # 指定字体
+./AMLgsMenu -m 1           # 强制 mock
 ```
-窗口全屏，右键或手柄 **X** 键切换菜单显示，其余区域透明以显示底层视频。
+右键或手柄 X 键切换菜单；支持鼠标/键盘/手柄导航。
 
 ## 构建
-要求：CMake 3.16+、C++17 编译器、SDL2、GLES2（及 EGL 如果平台提供）。
-ImGui 已作为子模块放在 `third_party/imgui`，可通过 `IMGUI_ROOT` 自定义。
+依赖：CMake 3.16+、C++17、EGL/GLES2、libinput/udev、libpng/zlib；ImGui 子模块在 `third_party/imgui`。
+
+CoreELEC 交叉示例（按当前工具链）：
 ```bash
-cmake -S . -B build -DAML_ENABLE_GLES=ON
-cmake --build build
+export TOOLCHAIN=/home/docker/CoreELEC/build.CoreELEC-Amlogic-ng.arm-21/toolchain
+export SYSROOT=${TOOLCHAIN}/armv8a-libreelec-linux-gnueabihf/sysroot
+export CXX=${TOOLCHAIN}/bin/armv8a-libreelec-linux-gnueabihf-g++
+export CC=${TOOLCHAIN}/bin/armv8a-libreelec-linux-gnueabihf-gcc
+cmake -S . -B build-ng \
+  -DCMAKE_C_COMPILER=${CC} \
+  -DCMAKE_CXX_COMPILER=${CXX} \
+  -DCMAKE_SYSROOT=${SYSROOT} \
+  -DIMGUI_ROOT=$(pwd)/third_party/imgui \
+  -DAML_ENABLE_GLES=ON
+cmake --build build-ng
 ```
 
-### 交叉编译
-- 使用厂商/工具链提供的 `toolchain.cmake` 和包含 GLES/EGL、SDL2 的 sysroot（如 Amlogic SDK 或 CoreELEC 输出）。
-- 示例：
-  ```bash
-  cmake -S . -B build-aarch64 \
-    -DCMAKE_TOOLCHAIN_FILE=/opt/toolchains/aarch64-linux-gnu.toolchain.cmake \
-    -DCMAKE_SYSROOT=/opt/sysroots/aarch64 \
-    -DSDL2_DIR=$CMAKE_SYSROOT/usr/lib/cmake/SDL2 \
-    -DIMGUI_ROOT=$(pwd)/third_party/imgui \
-    -DAML_ENABLE_GLES=ON
-  cmake --build build-aarch64
-  ```
-- 如果 sysroot 中没有 SDL2 的 CMake config，可改为设置 `SDL2_INCLUDE_DIR` 和 `SDL2_LIBRARY` 指向 sysroot 内路径；确保 GLES/EGL 库也在 sysroot 中并可被 CMake 找到。
+## MAVLink
+- 默认绑定 0.0.0.0:14450；收到首帧打印一次日志；未知飞行模式不显示。
+- Mock 模式跳过接收器，始终有数据。
 
-## 模拟遥测/OSD 数据
-- 所有演示数据集中在 `src/menu_renderer.cpp` 的 `BuildMockTelemetry`；渲染逻辑在 `DrawOsd`。用真实数据时，替换/移除 `BuildMockTelemetry` 并传入实际遥测。
-- 水平线、信号/温度/电池/GPS/视频位置和透明度可在 `DrawOsd` 调整。
-- 图标当前为占位方块。如需 PNG，加载成 ImGui 纹理，改 `draw_icon` 为 `AddImage`。
+## 配置下发
+- UDP（不等待回执）推送到 127.0.0.1:14650/14651：
+  - 信道：`sed -i 's/channel=.../' /etc/wfb.conf && iwconfig wlan0 channel ...`
+  - 频宽：`sed -i 's/bandwidth=.../' /etc/wfb.conf`
+  - 天空分辨率/帧率：`cli -s .video0.size WxH && cli -s .video0.fps R && killall -1 majestic`
+  - 码率：`cli -s .video0.bitrate <kbps> && curl -s 'http://localhost/api/v1/set?video0.bitrate=<kbps>'`
+  - 天空功率：`sed -i 's/driver_txpower_override=.../' /etc/wfb.conf && iw dev wlan0 set txpower fixed <p*50>`
+- 本地 monitor 网卡：遍历 monitor 接口并 `iw dev <dev> set channel <ch> HT20|HT40+`、`iw dev <dev> set txpower fixed <p*50>`。
 
-## 接入真实 MAVLink 的建议
-1. **解析端**：独立线程或非阻塞循环读取 MAVLink，解析所需字段（模式、RSSI、GPS、温度、电池、码率等），填充共享的 `TelemetryData` 结构（可参考 `menu_renderer.cpp` 字段）。
-2. **线程安全**：用互斥或无锁交换，让渲染线程获取最新 `TelemetryData`，替换 `BuildMockTelemetry(state_)` 为你的数据提供函数。
-3. **飞行模式文本**：根据 MAVLink base mode/custom mode 映射字符串，写入 `TelemetryData::flight_mode`。
-4. **图标**：加载 PNG 为纹理，`draw_icon` 改为 `AddImage` 绘制；保持 `icon_size`/`icon_gap` 以对齐文本。
+## 图标与字体
+- 图标路径：`/storage/digitalfpv/icons/`，建议透明 48x48。
+- 推荐粗体、多语言字体防止发虚，用 `-t` 指定。
 
-## 将菜单配置应用到系统
-- 目前菜单只更新 `MenuState`。需要下发时，可在选项回调或确认按钮中调用业务接口，或在 `MenuState` 添加回调：
-  - 信道/频宽/功率/码率：调用射频配置接口。
-  - 分辨率/刷新率：对接视频链路配置或重启/重协商命令。
-  - 录制开关：在 `ToggleRecording` 后触发实际录制控制。
-  - 确认/关闭：目前仅隐藏菜单，可在确认时集中提交当前选择。
-
-## 其它
-- 背景透明：请求 RGBA 缓冲并清屏 alpha 为 0；菜单/OSD 背景仅 0.2–0.25 透明度，底层视频可见。
-- 若 Amlogic 驱动不支持 alpha，可考虑自定义合成路径或使用专用图层。
-- ImGui 依赖：已作为子模块，缺失时执行 `git submodule update --init --recursive`。
+## 许可证与免责
+- 许可证：GPL-3.0-only（见 LICENSE）。禁止非法/违规用途，后果自负，与作者无关。
