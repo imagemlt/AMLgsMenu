@@ -4,6 +4,7 @@
 #include "video_mode.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdlib>
 #include <cstdio>
 #include <cmath>
@@ -14,13 +15,12 @@
 #include <GLES2/gl2.h>
 
 static MenuRenderer::TelemetryData BuildMockTelemetry(const MenuState &state) {
+    using Clock = std::chrono::steady_clock;
+    static auto last_ground_sample = Clock::time_point{};
+    const auto now_tp = Clock::now();
     const float t = static_cast<float>(ImGui::GetTime());
 
     MenuRenderer::TelemetryData data{};
-
-    data.ground_signal_a = -60.0f + 5.0f * std::sin(t * 0.8f);
-    data.ground_signal_b = -62.0f + 6.0f * std::cos(t * 0.65f);
-    data.rc_signal = -55.0f + 4.0f * std::sin(t * 1.1f);
     data.has_rc_signal = true;
     data.has_flight_mode = true;
     data.has_attitude = true;
@@ -28,38 +28,61 @@ static MenuRenderer::TelemetryData BuildMockTelemetry(const MenuState &state) {
     data.has_battery = true;
     data.has_sky_temp = true;
 
+    // Always update attitude/flight mode/GPS/battery each tick
     const char *modes[] = {"HORIZON", "ANGLE", "ACRO", "RTH"};
     data.flight_mode = modes[static_cast<int>(t / 4.0f) % 4];
-
     data.latitude = 37.773 + 0.001 * std::sin(t * 0.15f);
     data.longitude = -122.431 + 0.0015 * std::cos(t * 0.12f);
     data.altitude_m = 120.0f + 12.0f * std::sin(t * 0.35f);
     data.home_distance_m = 250.0f + 35.0f * std::cos(t * 0.45f);
-
-    const auto &ground_modes = state.GroundModes();
-    VideoMode mode = ground_modes.empty() ? VideoMode{"1920x1080 @ 60Hz", 1920, 1080, 60}
-                                          : ground_modes[state.GroundModeIndex() % ground_modes.size()];
-    std::ostringstream res;
-    res << mode.width << "x" << mode.height;
-    data.video_resolution = res.str();
-    static float last_fps_time = -1.0f;
-    static int cached_fps = 0;
-    const float now = static_cast<float>(ImGui::GetTime());
-    if (last_fps_time < 0.0f || (now - last_fps_time) >= 1.0f) {
-        cached_fps = GetOutputFps();
-        last_fps_time = now;
-    }
-    int fps = cached_fps;
-    data.video_refresh_hz = fps > 0 ? fps : (mode.refresh ? mode.refresh : 60);
-    data.bitrate_mbps = std::max(1.0f, 6.0f + 2.0f * std::sin(t * 0.4f));
-
     data.cell_voltage = 3.8f + 0.12f * std::sin(t * 0.6f);
     data.pack_voltage = data.cell_voltage * 4.0f + 0.4f * std::cos(t * 0.3f);
-
     data.sky_temp_c = 45.0f + 5.0f * std::sin(t * 0.22f);
-    data.ground_temp_c = ReadTemperatureC();
     data.roll_deg = 10.0f * std::sin(t * 0.6f);
     data.pitch_deg = 5.0f * std::cos(t * 0.5f);
+    data.rc_signal = -55.0f + 4.0f * std::sin(t * 1.1f);
+
+    // Ground-related metrics: sample at most once per second
+    static MenuRenderer::TelemetryData ground_cache{};
+    auto ms_since_ground = std::chrono::duration_cast<std::chrono::milliseconds>(now_tp - last_ground_sample).count();
+    const bool update_ground = (last_ground_sample.time_since_epoch().count() == 0 || ms_since_ground >= 1000);
+    if (update_ground) {
+        ground_cache.ground_signal_a = -60.0f + 5.0f * std::sin(t * 0.8f);
+        ground_cache.ground_signal_b = -62.0f + 6.0f * std::cos(t * 0.65f);
+        ground_cache.ground_temp_c = ReadTemperatureC();
+
+        const auto &ground_modes = state.GroundModes();
+        VideoMode mode = ground_modes.empty() ? VideoMode{"1920x1080 @ 60Hz", 1920, 1080, 60}
+                                              : ground_modes[state.GroundModeIndex() % ground_modes.size()];
+        std::ostringstream res;
+        res << mode.width << "x" << mode.height;
+        ground_cache.video_resolution = res.str();
+
+        static float last_fps_time = -1.0f;
+        static int cached_fps = 0;
+        const float now = static_cast<float>(ImGui::GetTime());
+        if (last_fps_time < 0.0f || (now - last_fps_time) >= 1.0f) {
+            cached_fps = GetOutputFps();
+            last_fps_time = now;
+        }
+        int fps = cached_fps;
+        ground_cache.video_refresh_hz = fps > 0 ? fps : (mode.refresh ? mode.refresh : 60);
+        ground_cache.bitrate_mbps = std::max(1.0f, 6.0f + 2.0f * std::sin(t * 0.4f));
+
+        last_ground_sample = now_tp;
+        std::fprintf(stdout,
+                     "[AMLgsMenu] Ground sample: A=%.1f dBm B=%.1f dBm temp=%.1fC res=%s @ %dHz bitrate=%.1f Mbps\n",
+                     ground_cache.ground_signal_a, ground_cache.ground_signal_b, ground_cache.ground_temp_c,
+                     ground_cache.video_resolution.c_str(), ground_cache.video_refresh_hz, ground_cache.bitrate_mbps);
+        std::fflush(stdout);
+    }
+
+    data.ground_signal_a = ground_cache.ground_signal_a;
+    data.ground_signal_b = ground_cache.ground_signal_b;
+    data.ground_temp_c = ground_cache.ground_temp_c;
+    data.video_resolution = ground_cache.video_resolution;
+    data.video_refresh_hz = ground_cache.video_refresh_hz;
+    data.bitrate_mbps = ground_cache.bitrate_mbps;
 
     return data;
 }
