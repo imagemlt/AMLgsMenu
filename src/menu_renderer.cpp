@@ -242,13 +242,12 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
     };
 
     if (!use_mock_ && !has_mavlink_data_) {
-        // show WAITING notice, then early out
+        // show WAITING notice but continue drawing ground/local info
         const char *msg = is_cn ? "WAITING" : "WAITING";
         ImVec2 pos(viewport->Pos.x + 12.0f, viewport->Pos.y + 12.0f);
         float small = ImGui::GetFontSize() * 0.85f;
         draw_list->AddText(ImGui::GetFont(), small, ImVec2(pos.x + 1, pos.y + 1), text_outline, msg);
         draw_list->AddText(ImGui::GetFont(), small, pos, text_fill, msg);
-        return;
     }
 
     auto draw_horizon = [&](float roll_deg, float pitch_deg) {
