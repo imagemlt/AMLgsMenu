@@ -182,6 +182,7 @@ void MenuRenderer::Render(bool &running_flag) {
         TelemetryData new_data = cached_telemetry_;
         if (use_mock_) {
             new_data = BuildMockTelemetry(state_);
+            has_mavlink_data_ = true;
         } else if (telemetry_provider_) {
             new_data = telemetry_provider_();
 
@@ -198,6 +199,9 @@ void MenuRenderer::Render(bool &running_flag) {
             } else {
                 last_ground_sample = now_tp;
             }
+            bool any = new_data.has_attitude || new_data.has_gps || new_data.has_battery ||
+                       new_data.has_rc_signal || new_data.has_sky_temp || new_data.has_flight_mode;
+            if (any) has_mavlink_data_ = true;
         }
         cached_telemetry_ = new_data;
         last_osd_update_time_ = static_cast<float>(ImGui::GetTime());
@@ -236,6 +240,16 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
             draw_list->AddRect(pos, ImVec2(pos.x + icon_size, pos.y + icon_size), border, 3.0f, 0, 1.5f);
         }
     };
+
+    if (!use_mock_ && !has_mavlink_data_) {
+        // show NO MAVLINK notice, then early out
+        const char *msg = is_cn ? "NO MAVLINK" : "NO MAVLINK";
+        ImVec2 pos(viewport->Pos.x + 12.0f, viewport->Pos.y + 12.0f);
+        float small = ImGui::GetFontSize() * 0.85f;
+        draw_list->AddText(ImGui::GetFont(), small, ImVec2(pos.x + 1, pos.y + 1), text_outline, msg);
+        draw_list->AddText(ImGui::GetFont(), small, pos, text_fill, msg);
+        return;
+    }
 
     auto draw_horizon = [&](float roll_deg, float pitch_deg) {
         const float line_half_len = viewport->Size.x * 0.25f * 0.66f; // lengthen a bit vs previous

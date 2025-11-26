@@ -98,6 +98,7 @@ void MavlinkReceiver::HandleMessage(const mavlink_message_t &msg) {
         uint8_t base = mavlink_msg_heartbeat_get_base_mode(&msg);
         uint32_t custom = mavlink_msg_heartbeat_get_custom_mode(&msg);
         telem_.flight_mode = ModeToString(base, custom);
+        telem_.has_flight_mode = (telem_.flight_mode != "UNKNOWN");
         break;
     }
     case MAVLINK_MSG_ID_ATTITUDE: {
