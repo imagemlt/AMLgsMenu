@@ -175,6 +175,9 @@ void Application::Run() {
     io.DisplaySize = ImVec2(static_cast<float>(fb_.width), static_cast<float>(fb_.height));
     io.MousePos = ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f);
 
+    uint64_t frame_counter = 0;
+    auto last_log = std::chrono::steady_clock::now();
+
     while (running_ && !menu_state_->ShouldExit()) {
         ProcessInput(running_);
         UpdateDeltaTime();
@@ -190,6 +193,15 @@ void Application::Run() {
         glClear(GL_COLOR_BUFFER_BIT);
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
         eglSwapBuffers(egl_display_, egl_surface_);
+
+        ++frame_counter;
+        auto now = std::chrono::steady_clock::now();
+        if (std::chrono::duration_cast<std::chrono::milliseconds>(now - last_log).count() >= 500) {
+            std::fprintf(stdout, "[AMLgsMenu] Frame %llu swap done\n",
+                         static_cast<unsigned long long>(frame_counter));
+            std::fflush(stdout);
+            last_log = now;
+        }
     }
 }
 
