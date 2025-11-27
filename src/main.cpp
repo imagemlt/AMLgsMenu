@@ -11,6 +11,10 @@ int main(int argc, char **argv) {
     std::string cfg_path;
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
+        if (arg == "-h" || arg == "--help") {
+            std::printf("Usage: %s [-t font.ttf] [-m 1] [-c command.cfg] [-f wfb.conf]\n", argv[0]);
+            return 0;
+        }
         if (arg == "-t" && i + 1 < argc) {
             font_path = argv[++i];
         } else if (arg == "-m" && i + 1 < argc) {

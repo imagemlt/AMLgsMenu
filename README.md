@@ -35,6 +35,7 @@ cmake --build build-ng
 ./AMLgsMenu -t /path/to/font.ttf      # optional font
 ./AMLgsMenu -m 1                      # force mock
 ./AMLgsMenu -f /flash/wfb.conf        # override wfb.conf path (default /flash/wfb.conf)
+./AMLgsMenu -h | --help               # show usage summary
 ```
 Right-click or gamepad X toggles the menu; controller navigation enabled.
 
