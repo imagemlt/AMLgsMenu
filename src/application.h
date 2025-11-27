@@ -43,9 +43,12 @@ private:
     void ProcessInput(bool &running);
     void HandleLibinputEvent(struct libinput_event *event, bool &running);
     void UpdateDeltaTime();
+public:
+    void SetConfigPath(const std::string &path) { config_path_ = path; }
+
+private:
     void LoadConfig();
     void SaveConfigValue(const std::string &key, const std::string &value);
-    void SetConfigPath(const std::string &path) { config_path_ = path; }
     int FindChannelIndex(int channel_val) const;
     int FindPowerIndex(int power_val) const;
     int FindGroundModeIndex(const std::string &label) const;
