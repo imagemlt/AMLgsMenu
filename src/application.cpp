@@ -5,6 +5,7 @@
 #include "video_mode.h"
 #include "mavlink_receiver.h"
 #include "udp_command_client.h"
+#include "command_templates.h"
 
 #include <EGL/egl.h>
 #include <algorithm>
@@ -15,6 +16,7 @@
 #include <linux/fb.h>
 #include <linux/input-event-codes.h>
 #include <poll.h>
+#include <unordered_map>
 #include <sstream>
 #include <sys/ioctl.h>
 #include <unistd.h>
@@ -98,6 +100,7 @@ bool Application::Initialize(const std::string &font_path, bool use_mock) {
         return false;
     }
     udp_client_ = std::make_unique<UdpCommandClient>();
+    command_templates_.LoadFromFile(command_cfg_path_);
     cmd_runner_ = std::make_unique<CommandExecutor>();
     cmd_runner_->Start();
 
@@ -279,68 +282,77 @@ void Application::Shutdown() {
 }
 
 void Application::ApplyChannel() {
-    if (!udp_client_) return;
     const auto &chs = menu_state_->Channels();
     if (chs.empty()) return;
     int ch = chs[menu_state_->ChannelIndex()];
-    std::ostringstream cmd;
-    cmd << "sed -i 's/channel=.*$/channel=" << ch << "/' /etc/wfb.conf && iwconfig wlan0 channel " << ch;
-    if (!udp_client_->Send(cmd.str(), false)) {
-        std::fprintf(stderr, "[AMLgsMenu] Failed to send channel command\n");
+    if (udp_client_) {
+        std::unordered_map<std::string, std::string> vars{{"CHANNEL", std::to_string(ch)}};
+        auto cmd = command_templates_.Render("remote", "channel", vars);
+        if (!cmd.empty() && !udp_client_->Send(cmd, false)) {
+            std::fprintf(stderr, "[AMLgsMenu] Failed to send channel command\n");
+        }
     }
     ApplyLocalMonitorChannel(ch);
 }
 
 void Application::ApplyBandwidth() {
-    if (!udp_client_) return;
     int bw = (menu_state_->BandwidthIndex() == 0) ? 10 : (menu_state_->BandwidthIndex() == 1 ? 20 : 40);
-    std::ostringstream cmd;
-    cmd << "sed -i 's/bandwidth=.*$/bandwidth=" << bw << "/' /etc/wfb.conf";
-    if (!udp_client_->Send(cmd.str(), false)) {
-        std::fprintf(stderr, "[AMLgsMenu] Failed to send bandwidth command\n");
+    if (udp_client_) {
+        std::unordered_map<std::string, std::string> vars{
+            {"BANDWIDTH", std::to_string(bw)}};
+        auto cmd = command_templates_.Render("remote", "bandwidth", vars);
+        if (!cmd.empty() && !udp_client_->Send(cmd, false)) {
+            std::fprintf(stderr, "[AMLgsMenu] Failed to send bandwidth command\n");
+        }
     }
 }
 
 void Application::ApplySkyMode() {
-    if (!udp_client_) return;
     const auto &sky_modes = menu_state_->SkyModes();
     if (sky_modes.empty()) return;
     VideoMode mode = sky_modes[menu_state_->SkyModeIndex()];
-    std::ostringstream cmd;
-    cmd << "cli -s .video0.size " << mode.width << "x" << mode.height
-        << " && cli -s .video0.fps " << (mode.refresh ? mode.refresh : 60)
-        << " && killall -1 majestic";
-    if (!udp_client_->Send(cmd.str(), false)) {
-        std::fprintf(stderr, "[AMLgsMenu] Failed to send sky mode command\n");
+    if (udp_client_) {
+        std::unordered_map<std::string, std::string> vars{
+            {"WIDTH", std::to_string(mode.width)},
+            {"HEIGHT", std::to_string(mode.height)},
+            {"FPS", std::to_string(mode.refresh ? mode.refresh : 60)}};
+        auto cmd = command_templates_.Render("remote", "sky_mode", vars);
+        if (!cmd.empty() && !udp_client_->Send(cmd, false)) {
+            std::fprintf(stderr, "[AMLgsMenu] Failed to send sky mode command\n");
+        }
     }
 }
 
 void Application::ApplyBitrate() {
-    if (!udp_client_) return;
     const auto &bitrates = menu_state_->Bitrates();
     if (bitrates.empty()) return;
     int br_mbps = bitrates[menu_state_->BitrateIndex()];
     int br_kbps = br_mbps * 1024; // CLI expects kbps; e.g. 2 -> 2048
-    std::ostringstream cmd;
-    cmd << "cli -s .video0.bitrate " << br_kbps
-        << " && curl -s 'http://localhost/api/v1/set?video0.bitrate=" << br_kbps << "'";
-    if (!udp_client_->Send(cmd.str(), false)) {
-        std::fprintf(stderr, "[AMLgsMenu] Failed to send bitrate command\n");
+    if (udp_client_) {
+        std::unordered_map<std::string, std::string> vars{
+            {"BITRATE_KBPS", std::to_string(br_kbps)}};
+        auto cmd = command_templates_.Render("remote", "bitrate", vars);
+        if (!cmd.empty() && !udp_client_->Send(cmd, false)) {
+            std::fprintf(stderr, "[AMLgsMenu] Failed to send bitrate command\n");
+        }
     }
 }
 
 void Application::ApplySkyPower() {
-    if (!udp_client_) return;
     const auto &powers = menu_state_->PowerLevels();
     if (powers.empty()) return;
     int p = powers[menu_state_->SkyPowerIndex()];
-    int tx_pwr = p * 50;
-    std::ostringstream cmd;
-    cmd << "sed -i 's/driver_txpower_override=.*$/driver_txpower_override=" << p
-        << "/' /etc/wfb.conf && iw dev wlan0 set txpower fixed " << tx_pwr;
-    if (!udp_client_->Send(cmd.str(), false)) {
-        std::fprintf(stderr, "[AMLgsMenu] Failed to send tx power command\n");
+    if (udp_client_) {
+        int tx_pwr = p * 50;
+        std::unordered_map<std::string, std::string> vars{
+            {"POWER", std::to_string(p)},
+            {"TXPOWER", std::to_string(tx_pwr)}};
+        auto cmd = command_templates_.Render("remote", "sky_power", vars);
+        if (!cmd.empty() && !udp_client_->Send(cmd, false)) {
+            std::fprintf(stderr, "[AMLgsMenu] Failed to send tx power command\n");
+        }
     }
+}
 }
 
 void Application::ApplyGroundPower() {
@@ -352,30 +364,28 @@ void Application::ApplyGroundPower() {
 
 void Application::ApplyLocalMonitorChannel(int channel) {
     if (channel <= 0) return;
-    // Determine bandwidth suffix for iw channel command
-    const char *bw_suffix = "";
     int bw_mhz = (menu_state_->BandwidthIndex() == 0) ? 10 : (menu_state_->BandwidthIndex() == 1 ? 20 : 40);
+    std::string bw_suffix;
     if (bw_mhz == 20) bw_suffix = " HT20";
     else if (bw_mhz == 40) bw_suffix = " HT40+";
-    // 10 MHz left empty (iw may treat as default/legacy)
-    std::ostringstream cmd;
-    cmd << "sh -c 'for dev in $(iw dev 2>/dev/null | "
-        << "awk '\\''/Interface/ {iface=$2} /type[[:space:]]+monitor/ {print iface}'\\''); "
-        << "do iw dev $dev set channel " << channel << bw_suffix << "; done'";
-    if (cmd_runner_) {
-        cmd_runner_->Enqueue(cmd.str());
+    std::unordered_map<std::string, std::string> vars{
+        {"CHANNEL", std::to_string(channel)},
+        {"BW_SUFFIX", bw_suffix}};
+    auto cmd = command_templates_.Render("local", "monitor_channel", vars);
+    if (!cmd.empty() && cmd_runner_) {
+        cmd_runner_->Enqueue(cmd);
     }
 }
 
 void Application::ApplyLocalMonitorPower(int power_level) {
     if (power_level <= 0) return;
     int tx_pwr = power_level * 50;
-    std::ostringstream cmd;
-    cmd << "sh -c 'for dev in $(iw dev 2>/dev/null | "
-        << "awk '\\''/Interface/ {iface=$2} /type[[:space:]]+monitor/ {print iface}'\\''); "
-        << "do iw dev $dev set txpower fixed " << tx_pwr << "; done'";
-    if (cmd_runner_) {
-        cmd_runner_->Enqueue(cmd.str());
+    std::unordered_map<std::string, std::string> vars{
+        {"POWER", std::to_string(power_level)},
+        {"TXPOWER", std::to_string(tx_pwr)}};
+    auto cmd = command_templates_.Render("local", "monitor_power", vars);
+    if (!cmd.empty() && cmd_runner_) {
+        cmd_runner_->Enqueue(cmd);
     }
 }
 

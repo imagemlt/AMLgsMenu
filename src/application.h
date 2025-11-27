@@ -3,6 +3,7 @@
 #include "menu_renderer.h"
 #include "menu_state.h"
 #include "udp_command_client.h"
+#include "command_templates.h"
 #include "command_executor.h"
 
 #include <EGL/egl.h>
@@ -23,6 +24,7 @@ public:
     ~Application();
 
     bool Initialize(const std::string &font_path = "", bool use_mock = false);
+    void SetCommandCfgPath(const std::string &path) { command_cfg_path_ = path; }
     void Run();
     void Shutdown();
 
@@ -55,6 +57,7 @@ private:
     void ApplyGroundPower();
     void ApplyLocalMonitorChannel(int channel);
     void ApplyLocalMonitorPower(int power_level);
+    std::string command_cfg_path_ = "/flash/command.cfg";
 
     FbContext fb_{};
     EGLDisplay egl_display_ = EGL_NO_DISPLAY;
@@ -71,6 +74,7 @@ private:
     std::unique_ptr<MenuRenderer> renderer_;
     std::unique_ptr<class MavlinkReceiver> mav_receiver_;
     std::unique_ptr<UdpCommandClient> udp_client_;
+    CommandTemplates command_templates_;
     std::unique_ptr<CommandExecutor> cmd_runner_;
     bool use_mock_ = false;
 
