@@ -11,6 +11,7 @@ add_executable(AMLgsMenu
     src/application.cpp
     src/main.cpp
     src/command_executor.cpp
+    src/command_templates.cpp
     src/mavlink_receiver.cpp
     src/menu_renderer.cpp
     src/menu_state.cpp

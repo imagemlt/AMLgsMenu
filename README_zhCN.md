@@ -15,6 +15,7 @@
 ./AMLgsMenu                # 默认字体
 ./AMLgsMenu -t 字体.ttf    # 指定字体
 ./AMLgsMenu -m 1           # 强制 mock
+./AMLgsMenu -f /flash/wfb.conf # 指定 wfb.conf 路径（默认 /flash/wfb.conf）
 ```
 右键或手柄 X 键切换菜单；支持鼠标/键盘/手柄导航。
 

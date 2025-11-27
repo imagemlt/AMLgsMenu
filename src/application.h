@@ -45,6 +45,7 @@ private:
     void UpdateDeltaTime();
     void LoadConfig();
     void SaveConfigValue(const std::string &key, const std::string &value);
+    void SetConfigPath(const std::string &path) { config_path_ = path; }
     int FindChannelIndex(int channel_val) const;
     int FindPowerIndex(int power_val) const;
     int FindGroundModeIndex(const std::string &label) const;
@@ -79,5 +80,5 @@ private:
     bool use_mock_ = false;
 
     std::unordered_map<std::string, std::string> config_kv_;
-    const std::string config_path_ = "/flash/wfb.conf";
+    std::string config_path_ = "/flash/wfb.conf";
 };
