@@ -34,6 +34,7 @@ cmake --build build-ng
 ```bash
 ./AMLgsMenu -t /path/to/font.ttf      # optional font
 ./AMLgsMenu -m 1                      # force mock
+./AMLgsMenu -c /flash/command.cfg     # override command template config (default /flash/command.cfg)
 ./AMLgsMenu -f /flash/wfb.conf        # override wfb.conf path (default /flash/wfb.conf)
 ./AMLgsMenu -h | --help               # show usage summary
 ```
