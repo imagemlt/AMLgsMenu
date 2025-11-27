@@ -353,7 +353,6 @@ void Application::ApplySkyPower() {
         }
     }
 }
-}
 
 void Application::ApplyGroundPower() {
     const auto &powers = menu_state_->PowerLevels();
