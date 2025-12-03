@@ -17,6 +17,7 @@
 #include <linux/fb.h>
 #include <linux/input-event-codes.h>
 #include <poll.h>
+#include <signal.h>
 #include <unordered_map>
 #include <sstream>
 #include <sys/ioctl.h>
@@ -816,8 +817,17 @@ void Application::HandleLibinputEvent(struct libinput_event *event, bool &runnin
             {
                 running = false;
             }
+            if (terminal_visible && key == KEY_C && (io.KeyCtrl || io.KeySuper))
+            {
+                std::fprintf(stdout, "[AMLgsMenu] Terminal ctrl-c triggered\n");
+                std::fflush(stdout);
+                terminal_->SendControlChar('\x03');
+                terminal_->SendSignal(SIGINT);
+            }
             if (!terminal_visible && key == KEY_C && (io.KeyCtrl || io.KeySuper))
             {
+                std::fprintf(stdout, "[AMLgsMenu] Ctrl-C quitting app\n");
+                std::fflush(stdout);
                 running = false;
             }
         }

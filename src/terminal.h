@@ -163,6 +163,8 @@ class Terminal
 	void setEmbedded(bool embedded) { isEmbedded = embedded; }
 	bool getEmbedded() const { return isEmbedded; }
 	void resize(int cols, int rows);
+	void SendControlChar(char c);
+	void SendSignal(int sig);
 	void setFont(ImFont *font) { font_override_ = font; }
 
 	void pasteFromClipboard();

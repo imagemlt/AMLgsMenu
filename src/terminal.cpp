@@ -2713,6 +2713,21 @@ void Terminal::processInput(const std::string &input)
 	write(ptyFd, input.c_str(), input.length());
 }
 
+void Terminal::SendControlChar(char c)
+{
+	if (ptyFd < 0)
+		return;
+	write(ptyFd, &c, 1);
+}
+
+void Terminal::SendSignal(int sig)
+{
+	if (childPid > 0)
+	{
+		kill(childPid, sig);
+	}
+}
+
 void Terminal::readOutput()
 {
 	char buffer[4096];

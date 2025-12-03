@@ -1,20 +1,21 @@
 # AMLgsMenu
 
-透明 OSD 与配置菜单，面向仅有 GLES + fbdev 的 Amlogic 平台。使用 EGL/GLES2 + libinput，ImGui 为子模块；背景全透明，菜单区域不透明。
+透明 OSD 与配置菜单，面向仅有 GLES + fbdev 的 Amlogic 平台。使用 EGL/GLES2 + libinput，ImGui 为子模块；背景全透明，菜单区域不透明。嵌入式终端借鉴自 MIT 许可的 [ImGui-Terminal](https://github.com/nealmick/ImGui-Terminal) 项目，感谢原作者提供的成熟终端模拟器。
 
 ## 特性
 - OSD（MAVLink 或 mock）：地平线、信号强度（dBm）、飞行模式、GPS+离家距离、视频码率/分辨率/刷新率、电池、天空/地面温度。未收到 MAVLink（且非 mock）时左上角小字 “WAITING”，其余元素不显示飞行模式。
 - 信道：2.4G 1–13，5G {32,36,40,44,48,52,56,60,64,68,96,100,104,108,112,116,120,124,128,132,136,140,144,149,153,157,161,165,169,173,177}；频宽 10/20/40 MHz。
 - 天空分辨率：1280x720@120，1920x1080@90，1920x1080@60，2240x1260@60，3200x1800@30，3840x2160@20。地面分辨率自动读取 `/sys/class/amhdmitx/amhdmitx0/modes`，无则回退默认。
-- 命令行：`-t 字体.ttf`（推荐粗体全字库），`-m 1` 强制 mock；默认 MAVLink 监听 0.0.0.0:14450 UDP。
+- 命令行：`-t 字体.ttf`（推荐粗体全字库）用于 UI，`-T 字体.ttf` 可选指定终端字体，`-m 1` 强制 mock；默认 MAVLink 监听 0.0.0.0:14450 UDP。
 - UDP 配置下发（单向）到 127.0.0.1:14650/14651：信道、频宽、天空分辨率/帧率（重启 majestic）、码率（Mbps→kbps）、天空功率（p*50 mBm）。本地 monitor 网卡同步信道/功率，带 HT20/HT40+ 后缀，无 monitor 时跳过。
 - 图标默认路径 `/storage/digitalfpv/icons/`（建议透明 48x48 PNG）。文字白色黑描边；菜单不透明，OSD 纯透明背景。
 
 ## 运行
 ```bash
-./AMLgsMenu                # 默认字体
-./AMLgsMenu -t 字体.ttf    # 指定字体
-./AMLgsMenu -m 1           # 强制 mock
+./AMLgsMenu                     # 默认字体
+./AMLgsMenu -t 字体.ttf         # 指定 UI 字体
+./AMLgsMenu -T 字体.ttf         # 指定终端字体（默认使用 UI 字体）
+./AMLgsMenu -m 1                # 强制 mock
 ./AMLgsMenu -c /flash/command.cfg # 指定 command.cfg 路径（默认 /flash/command.cfg）
 ./AMLgsMenu -f /flash/wfb.conf    # 指定 wfb.conf 路径（默认 /flash/wfb.conf）
 ./AMLgsMenu -h | --help           # 查看帮助
@@ -54,7 +55,7 @@ cmake --build build-ng
 
 ## 图标与字体
 - 图标路径：`/storage/digitalfpv/icons/`，建议透明 48x48。
-- 推荐粗体、多语言字体防止发虚，用 `-t` 指定。
+- 推荐粗体、多语言字体防止发虚，用 `-t` 指定，终端可通过 `-T` 继续使用不同字体。
 
 ## 许可证与免责
 - 许可证：GPL-3.0-only（见 LICENSE）。禁止非法/违规用途，后果自负，与作者无关。
