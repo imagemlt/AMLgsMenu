@@ -10,6 +10,7 @@
 #include <cmath>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 #include <png.h>
 #include <GLES2/gl2.h>
@@ -83,8 +84,11 @@ static MenuRenderer::TelemetryData BuildMockTelemetry(const MenuState &state) {
     return data;
 }
 
-MenuRenderer::MenuRenderer(MenuState &state, bool use_mock, std::function<TelemetryData()> provider)
-    : state_(state), use_mock_(use_mock), telemetry_provider_(std::move(provider)) {
+MenuRenderer::MenuRenderer(MenuState &state, bool use_mock, std::function<TelemetryData()> provider,
+                           std::function<void()> toggle_terminal,
+                           std::function<bool()> terminal_visible)
+    : state_(state), use_mock_(use_mock), telemetry_provider_(std::move(provider)),
+      toggle_terminal_(std::move(toggle_terminal)), terminal_visible_(std::move(terminal_visible)) {
     int w = 0, h = 0;
     const char *icon_base = "/storage/digitalfpv/icons/";
     LoadIcon(std::string(icon_base + std::string("antenna.png")).c_str(), icon_antenna_, w, h);
@@ -600,6 +604,22 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag) {
             ImGui::TextUnformatted(" ");
             ImGui::TableSetColumnIndex(3);
             ImVec2 btn_sz(-1, 0);
+            if (toggle_terminal_) {
+                bool terminal_open = terminal_visible_ ? terminal_visible_() : false;
+                const char *term_label = terminal_open ? (is_cn ? "\u5173\u95ed\u7ec8\u7aef" : "Hide Terminal")
+                                                       : (is_cn ? "\u6253\u5f00\u7ec8\u7aef" : "Open Terminal");
+                if (ImGui::Button(term_label, btn_sz)) {
+                    toggle_terminal_();
+                }
+            } else {
+                ImGui::Dummy(btn_sz);
+            }
+
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(2);
+            ImGui::TextUnformatted(" ");
+            ImGui::TableSetColumnIndex(3);
+            ImGui::Dummy(ImVec2(0, 6)); // small vertical gap
             if (ImGui::Button(is_cn ? "\u786e\u8ba4" : "OK", btn_sz)) {
                 state_.ToggleMenuVisibility();
             }

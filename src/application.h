@@ -5,6 +5,7 @@
 #include "udp_command_client.h"
 #include "command_templates.h"
 #include "command_executor.h"
+#include "terminal.h"
 
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
@@ -20,13 +21,16 @@
 #include <iostream>
 #include <functional>
 
+struct ImFont;
+
 class Application
 {
 public:
     Application();
     ~Application();
 
-    bool Initialize(const std::string &font_path = "", bool use_mock = false);
+    bool Initialize(const std::string &font_path = "", bool use_mock = false,
+                    const std::string &terminal_font_path = "");
     void SetCommandCfgPath(const std::string &path) { command_cfg_path_ = path; }
     void Run();
     void Shutdown();
@@ -88,6 +92,9 @@ private:
     std::unique_ptr<CommandExecutor> cmd_runner_;
     bool use_mock_ = false;
     bool command_runner_active_ = false;
+    std::unique_ptr<Terminal> terminal_;
+    ImFont *ui_font_ = nullptr;
+    ImFont *terminal_font_ = nullptr;
 
     std::unordered_map<std::string, std::string> config_kv_;
     std::string config_path_ = "/flash/wfb.conf";

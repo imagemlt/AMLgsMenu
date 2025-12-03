@@ -35,7 +35,8 @@ public:
         float pitch_deg = 0.0f;
     };
 
-    MenuRenderer(MenuState &state, bool use_mock, std::function<TelemetryData()> provider);
+    MenuRenderer(MenuState &state, bool use_mock, std::function<TelemetryData()> provider,
+                 std::function<void()> toggle_terminal = {}, std::function<bool()> terminal_visible = {});
     ~MenuRenderer();
 
     void Render(bool &running_flag);
@@ -59,4 +60,6 @@ private:
     ImTextureID icon_monitor_{};
     ImTextureID icon_temp_air_{};
     ImTextureID icon_temp_ground_{};
+    std::function<void()> toggle_terminal_;
+    std::function<bool()> terminal_visible_;
 };

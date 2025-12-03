@@ -9,6 +9,7 @@ static void PrintUsage(const char *prog) {
     std::printf(
         "Usage: %s [options]\n"
         "  -t, --font PATH       font file to load (default builtin)\n"
+        "  -T, --terminal-font PATH terminal font file (defaults to UI font)\n"
         "  -m, --mock 0|1        enable mock telemetry\n"
         "  -c, --command-cfg PATH command templates file (default /flash/command.cfg)\n"
         "  -f, --config PATH     wfb.conf path (default /flash/wfb.conf)\n"
@@ -18,11 +19,13 @@ static void PrintUsage(const char *prog) {
 
 int main(int argc, char **argv) {
     std::string font_path;
+    std::string term_font_path;
     bool use_mock = false;
     std::string cmd_cfg;
     std::string cfg_path;
     const option long_opts[] = {
         {"font", required_argument, nullptr, 't'},
+        {"terminal-font", required_argument, nullptr, 'T'},
         {"mock", required_argument, nullptr, 'm'},
         {"command-cfg", required_argument, nullptr, 'c'},
         {"config", required_argument, nullptr, 'f'},
@@ -31,10 +34,13 @@ int main(int argc, char **argv) {
     };
 
     int opt;
-    while ((opt = getopt_long(argc, argv, "t:m:c:f:h", long_opts, nullptr)) != -1) {
+    while ((opt = getopt_long(argc, argv, "t:T:m:c:f:h", long_opts, nullptr)) != -1) {
         switch (opt) {
         case 't':
             font_path = optarg;
+            break;
+        case 'T':
+            term_font_path = optarg;
             break;
         case 'm':
             use_mock = (std::atoi(optarg) != 0);
@@ -65,7 +71,7 @@ int main(int argc, char **argv) {
     if (!cfg_path.empty()) {
         app.SetConfigPath(cfg_path);
     }
-    if (!app.Initialize(font_path, use_mock)) {
+    if (!app.Initialize(font_path, use_mock, term_font_path)) {
         return 1;
     }
 

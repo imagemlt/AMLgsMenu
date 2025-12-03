@@ -6,6 +6,7 @@
 #include "mavlink_receiver.h"
 #include "udp_command_client.h"
 #include "command_templates.h"
+#include "terminal.h"
 
 #include <EGL/egl.h>
 #include <algorithm>
@@ -20,12 +21,15 @@
 #include <sstream>
 #include <sys/ioctl.h>
 #include <unistd.h>
+#include <thread>
 
 Application::Application() = default;
 Application::~Application() { Shutdown(); }
 
 namespace
 {
+    constexpr float kOsdRefreshHz = 30.0f;
+
     MenuRenderer::TelemetryData ConvertTelemetry(const ParsedTelemetry &src, const MenuState &state)
     {
         MenuRenderer::TelemetryData out{};
@@ -110,7 +114,8 @@ namespace
     }
 } // namespace
 
-bool Application::Initialize(const std::string &font_path, bool use_mock)
+bool Application::Initialize(const std::string &font_path, bool use_mock,
+                             const std::string &terminal_font_path)
 {
     use_mock_ = use_mock;
     if (!InitFramebuffer(fb_))
@@ -142,14 +147,30 @@ bool Application::Initialize(const std::string &font_path, bool use_mock)
     const float base_size = 26.0f; // larger base size for readability
     if (!font_path.empty())
     {
-        io.Fonts->AddFontFromFileTTF(font_path.c_str(), base_size);
+        ui_font_ = io.Fonts->AddFontFromFileTTF(font_path.c_str(), base_size);
     }
     else
     {
-        io.Fonts->AddFontDefault();
+        ui_font_ = io.Fonts->AddFontDefault();
+    }
+    if (!ui_font_)
+    {
+        ui_font_ = io.Fonts->Fonts.empty() ? io.Fonts->AddFontDefault() : io.Fonts->Fonts[0];
+    }
+    if (!terminal_font_path.empty())
+    {
+        terminal_font_ = io.Fonts->AddFontFromFileTTF(terminal_font_path.c_str(), base_size);
+    }
+    if (!terminal_font_)
+    {
+        terminal_font_ = ui_font_;
     }
 
     ImGui_ImplOpenGL3_Init("#version 100");
+
+    terminal_ = std::make_unique<Terminal>();
+    terminal_->setEmbedded(true);
+    terminal_->setFont(terminal_font_);
 
     auto sky_modes = DefaultSkyModes();
     auto ground_modes = LoadHdmiModes("/sys/class/amhdmitx/amhdmitx0/disp_cap");
@@ -176,7 +197,15 @@ bool Application::Initialize(const std::string &font_path, bool use_mock)
         };
     }
 
-    renderer_ = std::make_unique<MenuRenderer>(*menu_state_, use_mock_, provider);
+    renderer_ = std::make_unique<MenuRenderer>(
+        *menu_state_, use_mock_, provider,
+        [this]()
+        {
+            if (terminal_)
+                terminal_->toggleVisibility();
+        },
+        [this]()
+        { return terminal_ && terminal_->isTerminalVisible(); });
 
     menu_state_->SetOnChangeCallback([this](MenuState::SettingType type)
                                      {
@@ -232,83 +261,66 @@ void Application::Run()
     io.MousePos = ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f);
 
     uint64_t frame_counter = 0;
-    // uint64_t frame_step = 0;
     auto last_log = std::chrono::steady_clock::now();
-    auto begin_time = std::chrono::steady_clock::now();
+    auto frame_start = std::chrono::steady_clock::now();
 
-    int fresh_rate = 60;
-    std::regex pattern(R"((\d+)hz)", std::regex_constants::icase);
-    std::smatch matches;
-
-    auto it = config_kv_.find("ground_res");
-    if (it != config_kv_.end())
-    {
-        const std::string &resolution = it->second;
-        if (std::regex_search(resolution, matches, pattern) && matches.size() > 1)
-        {
-            fresh_rate = std::stoi(matches[1].str());
-        }
-    }
-
-    std::cout << "[AMLgsMenu] Target fresh rate : " << fresh_rate << " Hz\n";
     while (running_ && !menu_state_->ShouldExit())
     {
+        const auto loop_begin = frame_start;
         ProcessInput(running_);
-        UpdateCommandRunner(menu_state_->MenuVisible());
         UpdateDeltaTime();
-        /*if (frame_step % 3 != 0)
-        { // control FPS
-            frame_step += 1;
-            eglClientWaitSyncKHR(egl_display_, nullptr, 0, 16000000); // wait up to 16ms
-            continue;
-        }
-        else
-        {
-            frame_step = 1;
-        }*/
 
         ImGui_ImplOpenGL3_NewFrame();
         ImGui::NewFrame();
 
         renderer_->Render(running_);
+        if (terminal_) {
+            terminal_->render();
+        }
 
         ImGui::Render();
         glViewport(0, 0, fb_.width, fb_.height);
         glClearColor(0, 0, 0, 0);
         glClear(GL_COLOR_BUFFER_BIT);
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-        int fps_control = menu_state_->MenuVisible() ? fresh_rate / 2 : fresh_rate / 3;
-        std::cout << "[AMLgsMenu] Target fps_control : " << fps_control << " Hz\n";
         auto before_swap = std::chrono::steady_clock::now();
-        // for (int i = 0; i < 1; i++) // limit frame rate when menu is hidden
-        //{
-        // if (i != 0)
-        //     glViewport(0, 0, fb_.width, fb_.height);
-        before_swap = std::chrono::steady_clock::now();
         if (!eglSwapBuffers(egl_display_, egl_surface_))
         {
             std::fprintf(stderr, "[AMLgsMenu] eglSwapBuffers failed, stopping loop\n");
             running_ = false;
         }
-        //}
 
         ++frame_counter;
-        auto now = std::chrono::steady_clock::now();
-        auto ms_since_log = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_log).count();
-        auto ms_swap = std::chrono::duration_cast<std::chrono::milliseconds>(now - before_swap).count();
-
-        // std::this_thread::sleep_for(std::chrono::milliseconds((1000 / fps_control) - (ms_swap)));
-
+        auto frame_end = std::chrono::steady_clock::now();
+        auto ms_since_log = std::chrono::duration_cast<std::chrono::milliseconds>(frame_end - last_log).count();
         if (ms_since_log >= 30000)
         { // log every 30s to reduce noise
-            std::fprintf(stdout, "[AMLgsMenu] Frame %llu swap done (swap ms=%lld, FPS=%lld)\n",
+            auto ms_swap = std::chrono::duration_cast<std::chrono::milliseconds>(frame_end - before_swap).count();
+            std::fprintf(stdout, "[AMLgsMenu] Frame %llu swap done (swap ms=%lld)\n",
                          static_cast<unsigned long long>(frame_counter),
-                         static_cast<long long>(ms_swap),
-                         static_cast<long long>(frame_counter * 1000 /
-                                                std::max(1LL, std::chrono::duration_cast<std::chrono::milliseconds>(now - begin_time).count())));
+                         static_cast<long long>(ms_swap));
             std::fflush(stdout);
-            last_log = now;
+            last_log = frame_end;
         }
+
+        float target_period = 1.0f / kOsdRefreshHz;
+        auto frame_elapsed = std::chrono::duration<float>(frame_end - loop_begin).count();
+        if (frame_elapsed < target_period)
+        {
+            float remaining = target_period - frame_elapsed;
+            const float slice = 0.003f; // 3ms slices to keep input responsive
+            while (remaining > 0.0f)
+            {
+                float step = std::min(remaining, slice);
+                std::this_thread::sleep_for(std::chrono::duration<float>(step));
+                remaining -= step;
+                ProcessInput(running_);
+                if (!running_ || menu_state_->ShouldExit())
+                    break;
+            }
+            frame_end = std::chrono::steady_clock::now();
+        }
+        frame_start = frame_end;
     }
 }
 
@@ -350,6 +362,10 @@ void Application::Shutdown()
         cmd_runner_->Stop();
         command_runner_active_ = false;
         cmd_runner_.reset();
+    }
+    if (terminal_)
+    {
+        terminal_.reset();
     }
 
     ImGui_ImplOpenGL3_Shutdown();
@@ -648,6 +664,109 @@ void Application::ProcessInput(bool &running)
 void Application::HandleLibinputEvent(struct libinput_event *event, bool &running)
 {
     ImGuiIO &io = ImGui::GetIO();
+    auto add_key = [&](ImGuiKey key, bool down) {
+        io.AddKeyEvent(key, down);
+    };
+    auto add_key_if_mapped = [&](uint32_t code, bool down) {
+        ImGuiKey mapped = ImGuiKey_None;
+        if (code >= KEY_A && code <= KEY_Z)
+        {
+            mapped = static_cast<ImGuiKey>(ImGuiKey_A + (code - KEY_A));
+        }
+        else if (code >= KEY_1 && code <= KEY_9)
+        {
+            mapped = static_cast<ImGuiKey>(ImGuiKey_1 + (code - KEY_1));
+        }
+        else if (code == KEY_0)
+        {
+            mapped = ImGuiKey_0;
+        }
+        else if (code == KEY_SPACE)
+        {
+            mapped = ImGuiKey_Space;
+        }
+        else if (code == KEY_MINUS)
+        {
+            mapped = ImGuiKey_Minus;
+        }
+        else if (code == KEY_EQUAL)
+        {
+            mapped = ImGuiKey_Equal;
+        }
+        else if (code == KEY_DOT)
+        {
+            mapped = ImGuiKey_Period;
+        }
+        else if (code == KEY_COMMA)
+        {
+            mapped = ImGuiKey_Comma;
+        }
+        else if (code == KEY_SLASH)
+        {
+            mapped = ImGuiKey_Slash;
+        }
+        else if (code == KEY_SEMICOLON)
+        {
+            mapped = ImGuiKey_Semicolon;
+        }
+        else if (code == KEY_APOSTROPHE)
+        {
+            mapped = ImGuiKey_Apostrophe;
+        }
+        else if (code == KEY_GRAVE)
+        {
+            mapped = ImGuiKey_GraveAccent;
+        }
+        else if (code == KEY_LEFTBRACE)
+        {
+            mapped = ImGuiKey_LeftBracket;
+        }
+        else if (code == KEY_RIGHTBRACE)
+        {
+            mapped = ImGuiKey_RightBracket;
+        }
+        else if (code == KEY_BACKSLASH)
+        {
+            mapped = ImGuiKey_Backslash;
+        }
+        else if (code >= KEY_KP1 && code <= KEY_KP9)
+        {
+            mapped = static_cast<ImGuiKey>(ImGuiKey_Keypad1 + (code - KEY_KP1));
+        }
+        else if (code == KEY_KP0)
+        {
+            mapped = ImGuiKey_Keypad0;
+        }
+        else if (code == KEY_KPPLUS)
+        {
+            mapped = ImGuiKey_KeypadAdd;
+        }
+        else if (code == KEY_KPMINUS)
+        {
+            mapped = ImGuiKey_KeypadSubtract;
+        }
+        else if (code == KEY_KPASTERISK)
+        {
+            mapped = ImGuiKey_KeypadMultiply;
+        }
+        else if (code == KEY_KPSLASH)
+        {
+            mapped = ImGuiKey_KeypadDivide;
+        }
+        else if (code == KEY_KPDOT)
+        {
+            mapped = ImGuiKey_KeypadDecimal;
+        }
+        else if (code == KEY_KPENTER)
+        {
+            mapped = ImGuiKey_KeypadEnter;
+        }
+
+        if (mapped != ImGuiKey_None)
+        {
+            io.AddKeyEvent(mapped, down);
+        }
+    };
     switch (libinput_event_get_type(event))
     {
     case LIBINPUT_EVENT_POINTER_MOTION:
@@ -685,9 +804,11 @@ void Application::HandleLibinputEvent(struct libinput_event *event, bool &runnin
         auto *k = libinput_event_get_keyboard_event(event);
         uint32_t key = libinput_event_keyboard_get_key(k);
         auto state = libinput_event_keyboard_get_key_state(k);
+        bool down = (state == LIBINPUT_KEY_STATE_PRESSED);
+        bool terminal_visible = terminal_ && terminal_->isTerminalVisible();
         if (state == LIBINPUT_KEY_STATE_PRESSED)
         {
-            if (key == KEY_X || key == BTN_WEST)
+            if (!terminal_visible && (key == KEY_X || key == BTN_WEST))
             {
                 menu_state_->ToggleMenuVisibility();
             }
@@ -695,6 +816,159 @@ void Application::HandleLibinputEvent(struct libinput_event *event, bool &runnin
             {
                 running = false;
             }
+            if (!terminal_visible && key == KEY_C && (io.KeyCtrl || io.KeySuper))
+            {
+                running = false;
+            }
+        }
+        switch (key)
+        {
+        case KEY_LEFTSHIFT:
+        case KEY_RIGHTSHIFT:
+            io.KeyShift = down;
+            add_key(ImGuiKey_LeftShift, down);
+            add_key(ImGuiKey_RightShift, down);
+            io.AddKeyEvent(ImGuiMod_Shift, down);
+            break;
+        case KEY_LEFTCTRL:
+        case KEY_RIGHTCTRL:
+            io.KeyCtrl = down;
+            add_key(ImGuiKey_LeftCtrl, down);
+            add_key(ImGuiKey_RightCtrl, down);
+            io.AddKeyEvent(ImGuiMod_Ctrl, down);
+            break;
+        case KEY_LEFTALT:
+        case KEY_RIGHTALT:
+            io.KeyAlt = down;
+            add_key(ImGuiKey_LeftAlt, down);
+            add_key(ImGuiKey_RightAlt, down);
+            io.AddKeyEvent(ImGuiMod_Alt, down);
+            break;
+        case KEY_LEFTMETA:
+        case KEY_RIGHTMETA:
+            io.KeySuper = down;
+            add_key(ImGuiKey_LeftSuper, down);
+            add_key(ImGuiKey_RightSuper, down);
+            io.AddKeyEvent(ImGuiMod_Super, down);
+            break;
+        case KEY_ENTER:
+        case KEY_KPENTER:
+            add_key(ImGuiKey_Enter, down);
+            break;
+        case KEY_BACKSPACE:
+            add_key(ImGuiKey_Backspace, down);
+            break;
+        case KEY_TAB:
+            add_key(ImGuiKey_Tab, down);
+            break;
+        case KEY_UP:
+            add_key(ImGuiKey_UpArrow, down);
+            break;
+        case KEY_DOWN:
+            add_key(ImGuiKey_DownArrow, down);
+            break;
+        case KEY_LEFT:
+            add_key(ImGuiKey_LeftArrow, down);
+            break;
+        case KEY_RIGHT:
+            add_key(ImGuiKey_RightArrow, down);
+            break;
+        case KEY_HOME:
+            add_key(ImGuiKey_Home, down);
+            break;
+        case KEY_END:
+            add_key(ImGuiKey_End, down);
+            break;
+        case KEY_DELETE:
+            add_key(ImGuiKey_Delete, down);
+            break;
+        case KEY_PAGEUP:
+            add_key(ImGuiKey_PageUp, down);
+            break;
+        case KEY_PAGEDOWN:
+            add_key(ImGuiKey_PageDown, down);
+            break;
+        default:
+            break;
+        }
+
+        add_key_if_mapped(key, down);
+
+        if (down)
+        {
+            auto emit_char = [&](ImWchar c) { io.AddInputCharacter(c); };
+            auto emit_printable = [&](uint32_t code, bool shift) -> bool {
+                switch (code)
+                {
+                case KEY_A: emit_char(shift ? 'A' : 'a'); return true;
+                case KEY_B: emit_char(shift ? 'B' : 'b'); return true;
+                case KEY_C: emit_char(shift ? 'C' : 'c'); return true;
+                case KEY_D: emit_char(shift ? 'D' : 'd'); return true;
+                case KEY_E: emit_char(shift ? 'E' : 'e'); return true;
+                case KEY_F: emit_char(shift ? 'F' : 'f'); return true;
+                case KEY_G: emit_char(shift ? 'G' : 'g'); return true;
+                case KEY_H: emit_char(shift ? 'H' : 'h'); return true;
+                case KEY_I: emit_char(shift ? 'I' : 'i'); return true;
+                case KEY_J: emit_char(shift ? 'J' : 'j'); return true;
+                case KEY_K: emit_char(shift ? 'K' : 'k'); return true;
+                case KEY_L: emit_char(shift ? 'L' : 'l'); return true;
+                case KEY_M: emit_char(shift ? 'M' : 'm'); return true;
+                case KEY_N: emit_char(shift ? 'N' : 'n'); return true;
+                case KEY_O: emit_char(shift ? 'O' : 'o'); return true;
+                case KEY_P: emit_char(shift ? 'P' : 'p'); return true;
+                case KEY_Q: emit_char(shift ? 'Q' : 'q'); return true;
+                case KEY_R: emit_char(shift ? 'R' : 'r'); return true;
+                case KEY_S: emit_char(shift ? 'S' : 's'); return true;
+                case KEY_T: emit_char(shift ? 'T' : 't'); return true;
+                case KEY_U: emit_char(shift ? 'U' : 'u'); return true;
+                case KEY_V: emit_char(shift ? 'V' : 'v'); return true;
+                case KEY_W: emit_char(shift ? 'W' : 'w'); return true;
+                case KEY_X: emit_char(shift ? 'X' : 'x'); return true;
+                case KEY_Y: emit_char(shift ? 'Y' : 'y'); return true;
+                case KEY_Z: emit_char(shift ? 'Z' : 'z'); return true;
+                case KEY_1: emit_char(shift ? '!' : '1'); return true;
+                case KEY_2: emit_char(shift ? '@' : '2'); return true;
+                case KEY_3: emit_char(shift ? '#' : '3'); return true;
+                case KEY_4: emit_char(shift ? '$' : '4'); return true;
+                case KEY_5: emit_char(shift ? '%' : '5'); return true;
+                case KEY_6: emit_char(shift ? '^' : '6'); return true;
+                case KEY_7: emit_char(shift ? '&' : '7'); return true;
+                case KEY_8: emit_char(shift ? '*' : '8'); return true;
+                case KEY_9: emit_char(shift ? '(' : '9'); return true;
+                case KEY_0: emit_char(shift ? ')' : '0'); return true;
+                case KEY_SPACE: emit_char(' '); return true;
+                case KEY_MINUS: emit_char(shift ? '_' : '-'); return true;
+                case KEY_EQUAL: emit_char(shift ? '+' : '='); return true;
+                case KEY_LEFTBRACE: emit_char(shift ? '{' : '['); return true;
+                case KEY_RIGHTBRACE: emit_char(shift ? '}' : ']'); return true;
+                case KEY_BACKSLASH: emit_char(shift ? '|' : '\\'); return true;
+                case KEY_SEMICOLON: emit_char(shift ? ':' : ';'); return true;
+                case KEY_APOSTROPHE: emit_char(shift ? '"' : '\''); return true;
+                case KEY_GRAVE: emit_char(shift ? '~' : '`'); return true;
+                case KEY_COMMA: emit_char(shift ? '<' : ','); return true;
+                case KEY_DOT: emit_char(shift ? '>' : '.'); return true;
+                case KEY_SLASH: emit_char(shift ? '?' : '/'); return true;
+                case KEY_KP0: emit_char('0'); return true;
+                case KEY_KP1: emit_char('1'); return true;
+                case KEY_KP2: emit_char('2'); return true;
+                case KEY_KP3: emit_char('3'); return true;
+                case KEY_KP4: emit_char('4'); return true;
+                case KEY_KP5: emit_char('5'); return true;
+                case KEY_KP6: emit_char('6'); return true;
+                case KEY_KP7: emit_char('7'); return true;
+                case KEY_KP8: emit_char('8'); return true;
+                case KEY_KP9: emit_char('9'); return true;
+                case KEY_KPPLUS: emit_char('+'); return true;
+                case KEY_KPMINUS: emit_char('-'); return true;
+                case KEY_KPASTERISK: emit_char('*'); return true;
+                case KEY_KPSLASH: emit_char('/'); return true;
+                case KEY_KPDOT: emit_char('.'); return true;
+                default:
+                    return false;
+                }
+            };
+
+            emit_printable(key, io.KeyShift);
         }
         break;
     }
