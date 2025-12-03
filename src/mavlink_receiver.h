@@ -31,7 +31,9 @@ struct ParsedTelemetry {
     float home_distance_m = 0.0f;
     std::string flight_mode{"UNKNOWN"};
     int rc_rssi = 0; // 0-255
-    float batt_voltage_v = 0.0f;
+    float batt_voltage_v = 0.0f;   // pack voltage in volts
+    float cell_voltage_v = 0.0f;   // average cell voltage if available
+    int cell_count = 0;            // number of valid cells seen
     int batt_remaining_pct = -1; // -1 if unknown
     float sky_temp_c = 0.0f;
     float video_bitrate_mbps = 0.0f;
@@ -53,13 +55,14 @@ private:
     void HandleMessage(const mavlink_message_t &msg);
     void UpdateHomeDistanceLocked();
     static float HaversineMeters(double lat1, double lon1, double lat2, double lon2);
-    static std::string ModeToString(uint8_t base_mode, uint32_t custom_mode);
+    static std::string ModeToString(uint8_t base_mode, uint32_t custom_mode, uint8_t autopilot);
 
     uint16_t port_;
     int sock_ = -1;
     std::thread worker_;
     std::atomic<bool> running_{false};
     bool first_msg_logged_ = false;
+    uint8_t autopilot_type_ = MAV_AUTOPILOT_GENERIC;
 
     mutable std::mutex mtx_;
     ParsedTelemetry telem_;

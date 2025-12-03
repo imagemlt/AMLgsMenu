@@ -4,6 +4,7 @@
 #include <cerrno>
 #include <cmath>
 #include <cstring>
+#include <climits>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -96,9 +97,10 @@ void MavlinkReceiver::HandleMessage(const mavlink_message_t &msg) {
     }
     switch (msg.msgid) {
     case MAVLINK_MSG_ID_HEARTBEAT: {
+        autopilot_type_ = mavlink_msg_heartbeat_get_autopilot(&msg);
         uint8_t base = mavlink_msg_heartbeat_get_base_mode(&msg);
         uint32_t custom = mavlink_msg_heartbeat_get_custom_mode(&msg);
-        telem_.flight_mode = ModeToString(base, custom);
+        telem_.flight_mode = ModeToString(base, custom, autopilot_type_);
         telem_.has_flight_mode = (telem_.flight_mode != "UNKNOWN");
         break;
     }
@@ -141,13 +143,28 @@ void MavlinkReceiver::HandleMessage(const mavlink_message_t &msg) {
     case MAVLINK_MSG_ID_SYS_STATUS: {
         telem_.batt_voltage_v = mavlink_msg_sys_status_get_voltage_battery(&msg) / 1000.0f; // mV -> V
         telem_.batt_remaining_pct = mavlink_msg_sys_status_get_battery_remaining(&msg);     // 0-100, -1 unknown
+        telem_.cell_count = 0;      // unknown from this message
+        telem_.cell_voltage_v = 0.0f;
         telem_.has_battery = true;
         break;
     }
     case MAVLINK_MSG_ID_BATTERY_STATUS: {
-        int16_t volt_mv = mavlink_msg_battery_status_get_voltages(&msg, 0); // first cell or pack voltage
-        if (volt_mv != UINT16_MAX) {
-            telem_.batt_voltage_v = volt_mv / 1000.0f;
+        // Use per-cell voltages if present
+        float sum_v = 0.0f;
+        int valid_cells = 0;
+        uint16_t mv_cells[10] = {0};
+        mavlink_msg_battery_status_get_voltages(&msg, mv_cells);
+        for (int i = 0; i < 10; ++i) {
+            uint16_t mv = mv_cells[i];
+            if (mv != UINT16_MAX && mv != 0) {
+                sum_v += static_cast<float>(mv) / 1000.0f;
+                ++valid_cells;
+            }
+        }
+        if (valid_cells > 0) {
+            telem_.cell_count = valid_cells;
+            telem_.cell_voltage_v = sum_v / static_cast<float>(valid_cells);
+            telem_.batt_voltage_v = sum_v; // pack voltage = sum of cells
             telem_.has_battery = true;
         }
         int8_t rem = mavlink_msg_battery_status_get_battery_remaining(&msg);
@@ -178,11 +195,93 @@ float MavlinkReceiver::HaversineMeters(double lat1, double lon1, double lat2, do
     return static_cast<float>(kEarthRadiusM * c);
 }
 
-std::string MavlinkReceiver::ModeToString(uint8_t base_mode, uint32_t custom_mode) {
+std::string MavlinkReceiver::ModeToString(uint8_t base_mode, uint32_t custom_mode, uint8_t autopilot) {
+    // ArduPilot (Copter) custom_mode map
+    if (autopilot == MAV_AUTOPILOT_ARDUPILOTMEGA) {
+        switch (custom_mode) {
+        case 0: return "STABILIZE";
+        case 1: return "ACRO";
+        case 2: return "ALT_HOLD";
+        case 3: return "AUTO";
+        case 4: return "GUIDED";
+        case 5: return "LOITER";
+        case 6: return "RTL";
+        case 7: return "CIRCLE";
+        case 8: return "LAND";
+        case 9: return "DRIFT";
+        case 10: return "SPORT";
+        case 11: return "FLIP";
+        case 12: return "AUTOTUNE";
+        case 13: return "POSHOLD";
+        case 14: return "BRAKE";
+        case 15: return "THROW";
+        case 16: return "AVOID_ADSB";
+        case 17: return "GUIDED_NOGPS";
+        case 18: return "SMARTRTL";
+        case 19: return "FLOWHOLD";
+        case 20: return "FOLLOW";
+        case 21: return "ZIGZAG";
+        case 22: return "SYSTEMID";
+        case 23: return "AUTOROTATE";
+        case 24: return "AUTO_RTL";
+        default: break;
+        }
+    }
+
+    // PX4 custom mode: main_mode (bits 16-23), sub_mode (bits 24-31)
+    if (autopilot == MAV_AUTOPILOT_PX4) {
+        uint8_t main_mode = (custom_mode >> 16) & 0xFF;
+        uint8_t sub_mode = (custom_mode >> 24) & 0xFF;
+        switch (main_mode) {
+        case 1: return "MANUAL";
+        case 2: return "ALTCTL";
+        case 3: return "POSCTL";
+        case 4: {
+            switch (sub_mode) {
+            case 1: return "AUTO_READY";
+            case 2: return "AUTO_TAKEOFF";
+            case 3: return "AUTO_LOITER";
+            case 4: return "AUTO_MISSION";
+            case 5: return "AUTO_RTL";
+            case 6: return "AUTO_LAND";
+            case 7: return "AUTO_RTGS";
+            case 8: return "AUTO_FOLLOW";
+            case 9: return "AUTO_PRECLAND";
+            default: return "AUTO";
+            }
+        }
+        case 5: return "ACRO";
+        case 6: return "OFFBOARD";
+        case 7: return "STABILIZED";
+        case 8: return "RATTITUDE";
+        default: break;
+        }
+    }
+
+    // Generic autopilot: try INAV-style mapping; Betaflight often keeps custom_mode=0
+    if (autopilot == MAV_AUTOPILOT_GENERIC) {
+        switch (custom_mode) {
+        case 0: return "ACRO";
+        case 1: return "ANGLE";
+        case 2: return "HORIZON";
+        case 3: return "ALTHOLD";
+        case 4: return "CRUISE";
+        case 5: return "POSHOLD";
+        case 6: return "RTH";
+        case 7: return "NAV_WP";
+        case 8: return "LAND";
+        case 9: return "FAILSAFE";
+        case 10: return "GPS_RESCUE";
+        case 11: return "LAUNCH";
+        default: break; // Betaflight likely leaves custom_mode=0, fall through to base flags
+        }
+    }
+
+    // Base mode flags as a fallback
     if (base_mode & MAV_MODE_FLAG_AUTO_ENABLED) return "AUTO";
     if (base_mode & MAV_MODE_FLAG_GUIDED_ENABLED) return "GUIDED";
     if (base_mode & MAV_MODE_FLAG_STABILIZE_ENABLED) return "STABILIZE";
     if (base_mode & MAV_MODE_FLAG_MANUAL_INPUT_ENABLED) return "MANUAL";
-    (void)custom_mode;
+
     return "UNKNOWN";
 }

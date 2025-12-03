@@ -15,10 +15,13 @@
 #include <chrono>
 #include <unordered_map>
 #include <memory>
+#include <regex>
 #include <string>
+#include <iostream>
 #include <functional>
 
-class Application {
+class Application
+{
 public:
     Application();
     ~Application();
@@ -29,7 +32,8 @@ public:
     void Shutdown();
 
 private:
-    struct FbContext {
+    struct FbContext
+    {
         int fd = -1;
         int width = 0;
         int height = 0;
@@ -43,6 +47,7 @@ private:
     void ProcessInput(bool &running);
     void HandleLibinputEvent(struct libinput_event *event, bool &running);
     void UpdateDeltaTime();
+
 public:
     void SetConfigPath(const std::string &path) { config_path_ = path; }
 
@@ -62,6 +67,7 @@ private:
     void ApplyLocalMonitorChannel(int channel);
     void ApplyLocalMonitorPower(int power_level);
     std::string command_cfg_path_ = "/flash/command.cfg";
+    void UpdateCommandRunner(bool menu_visible);
 
     FbContext fb_{};
     EGLDisplay egl_display_ = EGL_NO_DISPLAY;
@@ -81,6 +87,7 @@ private:
     CommandTemplates command_templates_;
     std::unique_ptr<CommandExecutor> cmd_runner_;
     bool use_mock_ = false;
+    bool command_runner_active_ = false;
 
     std::unordered_map<std::string, std::string> config_kv_;
     std::string config_path_ = "/flash/wfb.conf";

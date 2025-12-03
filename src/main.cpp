@@ -1,28 +1,56 @@
 #include "application.h"
 
+#include <getopt.h>
 #include <string>
 #include <sys/resource.h>
 #include <cstdio>
+
+static void PrintUsage(const char *prog) {
+    std::printf(
+        "Usage: %s [options]\n"
+        "  -t, --font PATH       font file to load (default builtin)\n"
+        "  -m, --mock 0|1        enable mock telemetry\n"
+        "  -c, --command-cfg PATH command templates file (default /flash/command.cfg)\n"
+        "  -f, --config PATH     wfb.conf path (default /flash/wfb.conf)\n"
+        "  -h, --help            this message\n",
+        prog);
+}
 
 int main(int argc, char **argv) {
     std::string font_path;
     bool use_mock = false;
     std::string cmd_cfg;
     std::string cfg_path;
-    for (int i = 1; i < argc; ++i) {
-        std::string arg = argv[i];
-        if (arg == "-h" || arg == "--help") {
-            std::printf("Usage: %s [-t font.ttf] [-m 1] [-c command.cfg] [-f wfb.conf]\n", argv[0]);
+    const option long_opts[] = {
+        {"font", required_argument, nullptr, 't'},
+        {"mock", required_argument, nullptr, 'm'},
+        {"command-cfg", required_argument, nullptr, 'c'},
+        {"config", required_argument, nullptr, 'f'},
+        {"help", no_argument, nullptr, 'h'},
+        {nullptr, 0, nullptr, 0},
+    };
+
+    int opt;
+    while ((opt = getopt_long(argc, argv, "t:m:c:f:h", long_opts, nullptr)) != -1) {
+        switch (opt) {
+        case 't':
+            font_path = optarg;
+            break;
+        case 'm':
+            use_mock = (std::atoi(optarg) != 0);
+            break;
+        case 'c':
+            cmd_cfg = optarg;
+            break;
+        case 'f':
+            cfg_path = optarg;
+            break;
+        case 'h':
+            PrintUsage(argv[0]);
             return 0;
-        }
-        if (arg == "-t" && i + 1 < argc) {
-            font_path = argv[++i];
-        } else if (arg == "-m" && i + 1 < argc) {
-            use_mock = (std::atoi(argv[++i]) != 0);
-        } else if (arg == "-c" && i + 1 < argc) {
-            cmd_cfg = argv[++i];
-        } else if (arg == "-f" && i + 1 < argc) {
-            cfg_path = argv[++i];
+        default:
+            PrintUsage(argv[0]);
+            return 1;
         }
     }
 
