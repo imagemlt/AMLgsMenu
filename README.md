@@ -11,7 +11,7 @@ Transparent OSD and configuration UI for AML-based fbdev + GLES targets. Uses EG
 - Command-line: `-t <font.ttf>` custom UI font (recommend bold CJK font), `-T <font.ttf>` custom terminal font, `-m 1` forces mock data; default binds MAVLink UDP 0.0.0.0:14450.
 - UDP config push (fire-and-forget) to 127.0.0.1:14650/14651: channel, bandwidth, sky mode (size/fps, restart majestic), bitrate (Mbps→kbps), sky power (p*50 mBm). Ground power/channel also apply to local monitor interfaces via `iw` (with HT20/HT40+ suffix).
 - Icons default path `/storage/digitalfpv/icons/` (PNG, e.g., 48x48). Text is white with black outline, menu opaque; OSD fully transparent behind.
-- Custom text overlays: add an `[osd]` section in `command.cfg` with entries like `label = 120|80|/storage/digitalfpv/scripts/osd_cpu.sh`; the binary runs each command every 2s, captures the first line, and renders it at `(x,y)` relative to the top-left corner.
+- Custom text overlays for arbitrary commands (see the icons/fonts section for format).
 
 ## Build
 Deps: C++17, CMake 3.16+, EGL/OpenGL ES2, libinput/udev, libpng/zlib; ImGui submodule under `third_party/imgui`.
