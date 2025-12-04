@@ -2,10 +2,12 @@
 
 #include "menu_renderer.h"
 #include "menu_state.h"
+#include "signal_monitor.h"
 #include "udp_command_client.h"
 #include "command_templates.h"
 #include "command_executor.h"
 #include "terminal.h"
+#include "custom_osd_monitor.h"
 
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
@@ -90,6 +92,8 @@ private:
     std::unique_ptr<UdpCommandClient> udp_client_;
     CommandTemplates command_templates_;
     std::unique_ptr<CommandExecutor> cmd_runner_;
+    std::unique_ptr<SignalMonitor> signal_monitor_;
+    std::unique_ptr<CustomOsdMonitor> custom_osd_monitor_;
     bool use_mock_ = false;
     bool command_runner_active_ = false;
     std::unique_ptr<Terminal> terminal_;

@@ -14,6 +14,8 @@ add_executable(AMLgsMenu
     src/command_templates.cpp
     src/mavlink_receiver.cpp
     src/menu_renderer.cpp
+    src/signal_monitor.cpp
+    src/custom_osd_monitor.cpp
     src/menu_state.cpp
     src/video_mode.cpp
     src/udp_command_client.cpp

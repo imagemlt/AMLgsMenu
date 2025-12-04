@@ -19,6 +19,7 @@
 #include <poll.h>
 #include <signal.h>
 #include <unordered_map>
+#include <vector>
 #include <sstream>
 #include <sys/ioctl.h>
 #include <unistd.h>
@@ -136,6 +137,12 @@ bool Application::Initialize(const std::string &font_path, bool use_mock,
     }
     udp_client_ = std::make_unique<UdpCommandClient>();
     command_templates_.LoadFromFile(command_cfg_path_);
+    auto custom_entries = command_templates_.CustomOsdEntries();
+    if (!custom_entries.empty())
+    {
+        custom_osd_monitor_ = std::make_unique<CustomOsdMonitor>(custom_entries);
+        custom_osd_monitor_->Start();
+    }
     cmd_runner_ = std::make_unique<CommandExecutor>();
 
     IMGUI_CHECKVERSION();
@@ -171,6 +178,8 @@ bool Application::Initialize(const std::string &font_path, bool use_mock,
 
     terminal_ = std::make_unique<Terminal>();
     terminal_->setEmbedded(true);
+    signal_monitor_ = std::make_unique<SignalMonitor>();
+    signal_monitor_->Start();
     terminal_->setFont(terminal_font_);
 
     auto sky_modes = DefaultSkyModes();
@@ -194,7 +203,17 @@ bool Application::Initialize(const std::string &font_path, bool use_mock,
     {
         provider = [this]()
         {
-            return ConvertTelemetry(mav_receiver_->Latest(), *menu_state_);
+            auto data = ConvertTelemetry(mav_receiver_->Latest(), *menu_state_);
+            if (signal_monitor_)
+            {
+                auto signal_snap = signal_monitor_->Latest();
+                if (signal_snap.valid)
+                {
+                    data.ground_signal_a = signal_snap.signal_a;
+                    data.ground_signal_b = signal_snap.signal_b;
+                }
+            }
+            return data;
         };
     }
 
@@ -273,6 +292,28 @@ void Application::Run()
 
         ImGui_ImplOpenGL3_NewFrame();
         ImGui::NewFrame();
+
+        if (custom_osd_monitor_)
+        {
+            auto snaps = custom_osd_monitor_->Latest();
+            std::vector<MenuRenderer::CustomOverlay> overlays;
+            overlays.reserve(snaps.size());
+            for (const auto &snap : snaps)
+            {
+                if (!snap.valid || snap.text.empty())
+                    continue;
+                MenuRenderer::CustomOverlay overlay{};
+                overlay.x = snap.x;
+                overlay.y = snap.y;
+                overlay.text = snap.text;
+                overlays.push_back(std::move(overlay));
+            }
+            renderer_->SetCustomOverlays(overlays);
+        }
+        else
+        {
+            renderer_->SetCustomOverlays({});
+        }
 
         renderer_->Render(running_);
         if (terminal_) {
@@ -367,6 +408,16 @@ void Application::Shutdown()
     if (terminal_)
     {
         terminal_.reset();
+    }
+    if (signal_monitor_)
+    {
+        signal_monitor_->Stop();
+        signal_monitor_.reset();
+    }
+    if (custom_osd_monitor_)
+    {
+        custom_osd_monitor_->Stop();
+        custom_osd_monitor_.reset();
     }
 
     ImGui_ImplOpenGL3_Shutdown();
@@ -807,9 +858,39 @@ void Application::HandleLibinputEvent(struct libinput_event *event, bool &runnin
         auto state = libinput_event_keyboard_get_key_state(k);
         bool down = (state == LIBINPUT_KEY_STATE_PRESSED);
         bool terminal_visible = terminal_ && terminal_->isTerminalVisible();
+        bool menu_visible = menu_state_->MenuVisible();
+        auto handle_gamepad_nav = [&](uint32_t code, bool pressed) -> bool {
+            if (!menu_visible)
+                return false;
+            switch (code)
+            {
+            case BTN_DPAD_UP:
+                add_key(ImGuiKey_UpArrow, pressed);
+                return true;
+            case BTN_DPAD_DOWN:
+                add_key(ImGuiKey_DownArrow, pressed);
+                return true;
+            case BTN_DPAD_LEFT:
+                add_key(ImGuiKey_LeftArrow, pressed);
+                return true;
+            case BTN_DPAD_RIGHT:
+                add_key(ImGuiKey_RightArrow, pressed);
+                return true;
+            case BTN_SOUTH: // A button confirms selections
+                add_key(ImGuiKey_Enter, pressed);
+                return true;
+            default:
+                return false;
+            }
+        };
+
         if (state == LIBINPUT_KEY_STATE_PRESSED)
         {
             if (!terminal_visible && (key == KEY_X || key == BTN_WEST))
+            {
+                menu_state_->ToggleMenuVisibility();
+            }
+            if (!terminal_visible && (key == KEY_LEFTALT || key == KEY_RIGHTALT))
             {
                 menu_state_->ToggleMenuVisibility();
             }
@@ -831,6 +912,8 @@ void Application::HandleLibinputEvent(struct libinput_event *event, bool &runnin
                 running = false;
             }
         }
+
+        handle_gamepad_nav(key, down);
         switch (key)
         {
         case KEY_LEFTSHIFT:

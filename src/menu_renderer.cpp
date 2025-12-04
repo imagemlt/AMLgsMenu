@@ -99,6 +99,10 @@ MenuRenderer::MenuRenderer(MenuState &state, bool use_mock, std::function<Teleme
     LoadIcon(std::string(icon_base + std::string("temp_air.png")).c_str(), icon_temp_air_, w, h);
     LoadIcon(std::string(icon_base + std::string("temp_ground.png")).c_str(), icon_temp_ground_, w, h);
 }
+
+void MenuRenderer::SetCustomOverlays(const std::vector<CustomOverlay> &overlays) {
+    custom_overlays_ = overlays;
+}
 bool MenuRenderer::LoadIcon(const char *path, ImTextureID &out_id, int &out_w, int &out_h) {
     FILE *fp = std::fopen(path, "rb");
     if (!fp) return false;
@@ -426,6 +430,13 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
         ImGui::PopStyleColor();
     }
     ImGui::End();
+
+    for (const auto &overlay : custom_overlays_) {
+        if (overlay.text.empty()) continue;
+        ImVec2 pos(viewport->Pos.x + overlay.x, viewport->Pos.y + overlay.y);
+        draw_list->AddText(ImVec2(pos.x + 1.2f, pos.y + 1.2f), text_outline, overlay.text.c_str());
+        draw_list->AddText(pos, text_fill, overlay.text.c_str());
+    }
 }
 
 void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag) {

@@ -5,6 +5,7 @@
 #include "imgui.h"
 #include <functional>
 #include <chrono>
+#include <string>
 #include <vector>
 
 class MenuRenderer {
@@ -40,6 +41,12 @@ public:
     ~MenuRenderer();
 
     void Render(bool &running_flag);
+    struct CustomOverlay {
+        float x = 0.0f;
+        float y = 0.0f;
+        std::string text;
+    };
+    void SetCustomOverlays(const std::vector<CustomOverlay> &overlays);
 
 private:
     void DrawOsd(const ImGuiViewport *viewport, const TelemetryData &data) const;
@@ -62,4 +69,5 @@ private:
     ImTextureID icon_temp_ground_{};
     std::function<void()> toggle_terminal_;
     std::function<bool()> terminal_visible_;
+    std::vector<CustomOverlay> custom_overlays_;
 };

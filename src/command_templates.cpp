@@ -37,6 +37,28 @@ bool CommandTemplates::LoadFromFile(const std::string &path) {
         std::string key = Trim(trimmed.substr(0, pos));
         std::string value = Trim(trimmed.substr(pos + 1));
         if (section.empty()) continue;
+        if (section == "osd") {
+            auto parts = Split(value, '|');
+            if (parts.size() >= 3) {
+                try {
+                    float x = std::stof(parts[0]);
+                    float y = std::stof(parts[1]);
+                    std::string cmd = parts[2];
+                    for (size_t i = 3; i < parts.size(); ++i) {
+                        cmd += "|" + parts[i];
+                    }
+                    CustomOsdCommand entry;
+                    entry.key = key;
+                    entry.x = x;
+                    entry.y = y;
+                    entry.command = Trim(cmd);
+                    custom_osd_.push_back(entry);
+                } catch (const std::exception &) {
+                    std::cerr << "[AMLgsMenu] invalid OSD entry: " << line << "\n";
+                }
+            }
+            continue;
+        }
         commands_[section][key] = value;
     }
     return true;
@@ -89,4 +111,14 @@ void CommandTemplates::InitDefaults() {
     defaults_["local"]["monitor_power"] =
         "sh -c 'for dev in $(iw dev 2>/dev/null | awk '\\''/Interface/ {iface=$2} /type[[:space:]]+monitor/ {print iface}'\\''); "
         "do iw dev $dev set txpower fixed ${TXPOWER}; done'";
+}
+
+std::vector<std::string> CommandTemplates::Split(const std::string &value, char delim) {
+    std::vector<std::string> parts;
+    std::string current;
+    std::istringstream iss(value);
+    while (std::getline(iss, current, delim)) {
+        parts.push_back(Trim(current));
+    }
+    return parts;
 }
