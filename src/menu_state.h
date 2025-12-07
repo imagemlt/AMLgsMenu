@@ -21,11 +21,17 @@ public:
         GroundPower,
         Recording,
         Language,
+        Firmware,
     };
 
     enum class Language {
         CN = 0,
         EN = 1,
+    };
+
+    enum class FirmwareType {
+        CCEdition = 0,
+        Official = 1,
     };
 
     using SettingChangedCallback = std::function<void(SettingType)>;
@@ -46,6 +52,7 @@ public:
     int SkyPowerIndex() const { return sky_power_index_; }
     int GroundPowerIndex() const { return ground_power_index_; }
     Language GetLanguage() const { return language_; }
+    FirmwareType GetFirmwareType() const { return firmware_type_; }
     bool Recording() const { return recording_; }
     bool ShouldExit() const { return should_exit_; }
 
@@ -57,6 +64,7 @@ public:
     void SetSkyPowerIndex(int index);
     void SetGroundPowerIndex(int index);
     void SetLanguage(Language lang);
+    void SetFirmwareType(FirmwareType type);
     void ToggleMenuVisibility() { menu_visible_ = !menu_visible_; }
 
     void ToggleRecording();
@@ -84,6 +92,7 @@ private:
     int sky_power_index_ = 0;
     int ground_power_index_ = 0;
     Language language_ = Language::CN;
+    FirmwareType firmware_type_ = FirmwareType::CCEdition;
     bool menu_visible_ = false;
     bool recording_ = false;
     bool should_exit_ = false;

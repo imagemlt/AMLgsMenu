@@ -11,10 +11,11 @@ Transparent OSD and configuration UI for AML-based fbdev + GLES targets. Uses EG
 - Command-line: `-t <font.ttf>` custom UI font (recommend bold CJK font), `-T <font.ttf>` custom terminal font, `-m 1` forces mock data; default binds MAVLink UDP 0.0.0.0:14450.
 - UDP config push (fire-and-forget) to 127.0.0.1:14650/14651: channel, bandwidth, sky mode (size/fps, restart majestic), bitrate (Mbps→kbps), sky power (p*50 mBm). Ground power/channel also apply to local monitor interfaces via `iw` (with HT20/HT40+ suffix).
 - Icons default path `/storage/digitalfpv/icons/` (PNG, e.g., 48x48). Text is white with black outline, menu opaque; OSD fully transparent behind.
+- Firmware transport toggle: CC edition (UDP loopback) or Official (SSH to `root@10.5.0.10`, password `12345`). Both use the same `command.cfg` templates; switch inside the menu and the app transparently swaps transports.
 - Custom text overlays for arbitrary commands (see the icons/fonts section for format).
 
 ## Build
-Deps: C++17, CMake 3.16+, EGL/OpenGL ES2, libinput/udev, libpng/zlib; ImGui submodule under `third_party/imgui`.
+Deps: C++17, CMake 3.16+, EGL/OpenGL ES2, libinput/udev, libpng/zlib, libssh; ImGui submodule under `third_party/imgui`.
 
 CoreELEC cross example (from user toolchain):
 ```bash
@@ -41,6 +42,11 @@ cmake --build build-ng
 ./AMLgsMenu -h | --help               # show usage summary
 ```
 Right-click or gamepad X toggles the menu; controller navigation enabled.
+
+## Firmware modes
+- Menu entry “Firmware” lets you choose **CC edition (UDP)** or **Official (SSH)**. UDP mode targets the classic CC firmware and keeps talking to 127.0.0.1:14650/14651. Official mode opens a short-lived SSH session to `root@10.5.0.10` (password `12345`) for every command/query. The `command.cfg` templates stay the same—the app simply swaps transports.
+- The selection is persisted inside `/flash/wfb.conf` under `firmware=cc|official`. Edit the file manually or use the menu; switching triggers a one-shot remote state sync so the dropdowns reflect the other side.
+- SSH support relies on libssh; make sure the dependency is available in your CoreELEC toolchain/sysroot.
 
 ## MAVLink
 - Receiver binds 0.0.0.0:14450 UDP; first message logs once. Flight mode hidden if unknown. Mock mode bypasses receiver.

@@ -9,6 +9,7 @@
 - 命令行：`-t 字体.ttf`（推荐粗体全字库）用于 UI，`-T 字体.ttf` 可选指定终端字体，`-m 1` 强制 mock；默认 MAVLink 监听 0.0.0.0:14450 UDP。
 - UDP 配置下发（单向）到 127.0.0.1:14650/14651：信道、频宽、天空分辨率/帧率（重启 majestic）、码率（Mbps→kbps）、天空功率（p*50 mBm）。本地 monitor 网卡同步信道/功率，带 HT20/HT40+ 后缀，无 monitor 时跳过。
 - 图标默认路径 `/storage/digitalfpv/icons/`（建议透明 48x48 PNG）。文字白色黑描边；菜单不透明，OSD 纯透明背景。
+- 固件传输模式可选：**CC 固件（UDP）** 与 **官方固件（SSH）**。两者共用 `command.cfg`，菜单切换后自动切换到底层传输；SSH 连接 `root@10.5.0.10`（密码 `12345`）。
 - 自定义 OSD 文本（格式示例见文末“图标与字体”小节）。
 
 ## 运行
@@ -24,7 +25,7 @@
 右键或手柄 X 键切换菜单；支持鼠标/键盘/手柄导航。
 
 ## 构建
-依赖：CMake 3.16+、C++17、EGL/GLES2、libinput/udev、libpng/zlib；ImGui 子模块在 `third_party/imgui`。
+依赖：CMake 3.16+、C++17、EGL/GLES2、libinput/udev、libpng/zlib、libssh；ImGui 子模块在 `third_party/imgui`。
 
 CoreELEC 交叉示例（按当前工具链）：
 ```bash
@@ -40,6 +41,11 @@ cmake -S . -B build-ng \
   -DAML_ENABLE_GLES=ON
 cmake --build build-ng
 ```
+
+## 固件模式
+- “固件模式”下拉可切换 **CC 固件（UDP）** 与 **官方固件（SSH）**。UDP 模式使用本地 127.0.0.1:14650/14651；官方模式会对 `root@10.5.0.10`（密码 `12345`）发起短连接 SSH，并在同一个 `command.cfg` 模板上执行命令/查询。
+- 选择会写入 `/flash/wfb.conf` 的 `firmware=cc|official`，也可以手动编辑该键值。切换后程序会重新拉取一次天空端状态，使菜单显示同步。
+- 编译/部署前请确保系统包含 libssh。
 
 ## MAVLink
 - 默认绑定 0.0.0.0:14450；收到首帧打印一次日志；未知飞行模式不显示。

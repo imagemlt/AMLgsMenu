@@ -15,10 +15,11 @@ add_executable(AMLgsMenu
     src/mavlink_receiver.cpp
     src/menu_renderer.cpp
     src/signal_monitor.cpp
-    src/custom_osd_monitor.cpp
+    src/telemetry_worker.cpp
     src/menu_state.cpp
     src/video_mode.cpp
     src/udp_command_client.cpp
+    src/ssh_command_client.cpp
     src/terminal.cpp
 )
 
@@ -87,6 +88,15 @@ if(NOT ZLIB_LIBRARY)
 endif()
 target_include_directories(AMLgsMenu PRIVATE ${PNG_INCLUDE_DIR})
 target_link_libraries(AMLgsMenu PRIVATE ${PNG_LIBRARY} ${ZLIB_LIBRARY})
+
+find_path(LIBSSH_INCLUDE_DIR NAMES libssh/libssh.h)
+find_library(LIBSSH_LIBRARY NAMES ssh)
+if(NOT LIBSSH_INCLUDE_DIR OR NOT LIBSSH_LIBRARY)
+    message(FATAL_ERROR "libssh not found (required for SSH transport)")
+endif()
+find_package(OpenSSL REQUIRED)
+target_include_directories(AMLgsMenu PRIVATE ${LIBSSH_INCLUDE_DIR})
+target_link_libraries(AMLgsMenu PRIVATE ${LIBSSH_LIBRARY} OpenSSL::Crypto OpenSSL::SSL)
 
 # Basic warnings
 if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")

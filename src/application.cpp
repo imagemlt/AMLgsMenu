@@ -5,13 +5,17 @@
 #include "video_mode.h"
 #include "mavlink_receiver.h"
 #include "udp_command_client.h"
+#include "ssh_command_client.h"
 #include "command_templates.h"
 #include "terminal.h"
 
 #include <EGL/egl.h>
 #include <algorithm>
+#include <cmath>
+#include <cctype>
 #include <cstdlib>
 #include <cstdio>
+#include <cstring>
 #include <fcntl.h>
 #include <fstream>
 #include <linux/fb.h>
@@ -22,6 +26,8 @@
 #include <vector>
 #include <sstream>
 #include <sys/ioctl.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>
 #include <unistd.h>
 #include <thread>
 
@@ -31,6 +37,20 @@ Application::~Application() { Shutdown(); }
 namespace
 {
     constexpr float kOsdRefreshHz = 30.0f;
+    std::string TrimCopy(const std::string &text)
+    {
+        size_t begin = 0;
+        while (begin < text.size() && std::isspace(static_cast<unsigned char>(text[begin])))
+        {
+            ++begin;
+        }
+        size_t end = text.size();
+        while (end > begin && std::isspace(static_cast<unsigned char>(text[end - 1])))
+        {
+            --end;
+        }
+        return text.substr(begin, end - begin);
+    }
 
     MenuRenderer::TelemetryData ConvertTelemetry(const ParsedTelemetry &src, const MenuState &state)
     {
@@ -92,7 +112,7 @@ namespace
 
         out.has_sky_temp = src.has_sky_temp;
         out.sky_temp_c = src.sky_temp_c;
-        out.ground_temp_c = ReadTemperatureC();
+        out.ground_temp_c = 0.0f;
 
         if (src.has_video_metrics)
         {
@@ -135,14 +155,7 @@ bool Application::Initialize(const std::string &font_path, bool use_mock,
         std::fprintf(stderr, "[AMLgsMenu] Failed to init libinput/udev\n");
         return false;
     }
-    udp_client_ = std::make_unique<UdpCommandClient>();
     command_templates_.LoadFromFile(command_cfg_path_);
-    auto custom_entries = command_templates_.CustomOsdEntries();
-    if (!custom_entries.empty())
-    {
-        custom_osd_monitor_ = std::make_unique<CustomOsdMonitor>(custom_entries);
-        custom_osd_monitor_->Start();
-    }
     cmd_runner_ = std::make_unique<CommandExecutor>();
 
     IMGUI_CHECKVERSION();
@@ -179,7 +192,8 @@ bool Application::Initialize(const std::string &font_path, bool use_mock,
     terminal_ = std::make_unique<Terminal>();
     terminal_->setEmbedded(true);
     signal_monitor_ = std::make_unique<SignalMonitor>();
-    signal_monitor_->Start();
+    telemetry_worker_ = std::make_unique<TelemetryWorker>(signal_monitor_.get());
+    telemetry_worker_->Start();
     terminal_->setFont(terminal_font_);
 
     auto sky_modes = DefaultSkyModes();
@@ -191,6 +205,8 @@ bool Application::Initialize(const std::string &font_path, bool use_mock,
 
     menu_state_ = std::make_unique<MenuState>(sky_modes, ground_modes);
     LoadConfig();
+    RebuildTransport(menu_state_->GetFirmwareType());
+    StartRemoteSync();
     ApplyLanguageToImGui(menu_state_->GetLanguage());
     if (!use_mock_)
     {
@@ -204,17 +220,37 @@ bool Application::Initialize(const std::string &font_path, bool use_mock,
         provider = [this]()
         {
             auto data = ConvertTelemetry(mav_receiver_->Latest(), *menu_state_);
-            if (signal_monitor_)
+            if (telemetry_worker_)
             {
-                auto signal_snap = signal_monitor_->Latest();
-                if (signal_snap.valid)
+                auto snap = telemetry_worker_->Latest();
+                if (snap.ground_signal.valid)
                 {
-                    data.ground_signal_a = signal_snap.signal_a;
-                    data.ground_signal_b = signal_snap.signal_b;
+                    data.ground_signal_a = snap.ground_signal.signal_a;
+                    data.ground_signal_b = snap.ground_signal.signal_b;
                 }
+                if (snap.packet_rate.valid && snap.packet_rate.primary_mbps > 0.0f)
+                {
+                    data.bitrate_mbps = snap.packet_rate.primary_mbps;
+                }
+                if (snap.has_ground_temp)
+                {
+                    data.ground_temp_c = snap.ground_temp_c;
+                }
+                if (snap.output_fps > 0)
+                {
+                    data.video_refresh_hz = snap.output_fps;
+                }
+            }
+            else
+            {
+                data.ground_temp_c = ReadTemperatureC();
             }
             return data;
         };
+    }
+    else if (telemetry_worker_)
+    {
+        provider = nullptr;
     }
 
     renderer_ = std::make_unique<MenuRenderer>(
@@ -242,7 +278,9 @@ bool Application::Initialize(const std::string &font_path, bool use_mock,
         case MenuState::SettingType::GroundMode: {
             // update ground_res and clean legacy typo
             config_kv_.erase("groud_res");
-            SaveConfigValue("ground_res", menu_state_->GroundModes()[menu_state_->GroundModeIndex()].label);
+            auto label = menu_state_->GroundModes()[menu_state_->GroundModeIndex()].label;
+            SaveConfigValue("ground_res", label);
+            ApplyGroundDisplayMode(label);
             break;
         }
         case MenuState::SettingType::SkyMode:
@@ -262,6 +300,21 @@ bool Application::Initialize(const std::string &font_path, bool use_mock,
             auto lang = menu_state_->GetLanguage();
             SaveConfigValue("lang", lang == MenuState::Language::CN ? "cn" : "en");
             ApplyLanguageToImGui(lang);
+            break;
+        }
+        case MenuState::SettingType::Recording: {
+            bool recording = menu_state_->Recording();
+            if (!SendRecordingCommand(recording)) {
+                std::fprintf(stderr, "[AMLgsMenu] Failed to send recording command (%s)\n",
+                             recording ? "record=1" : "record=0");
+            }
+            break;
+        }
+        case MenuState::SettingType::Firmware: {
+            auto mode = menu_state_->GetFirmwareType();
+            SaveConfigValue("firmware", mode == MenuState::FirmwareType::CCEdition ? "cc" : "official");
+            RebuildTransport(mode);
+            RestartRemoteSync();
             break;
         }
         default:
@@ -288,32 +341,11 @@ void Application::Run()
     {
         const auto loop_begin = frame_start;
         ProcessInput(running_);
+        DrainRemoteState();
         UpdateDeltaTime();
 
         ImGui_ImplOpenGL3_NewFrame();
         ImGui::NewFrame();
-
-        if (custom_osd_monitor_)
-        {
-            auto snaps = custom_osd_monitor_->Latest();
-            std::vector<MenuRenderer::CustomOverlay> overlays;
-            overlays.reserve(snaps.size());
-            for (const auto &snap : snaps)
-            {
-                if (!snap.valid || snap.text.empty())
-                    continue;
-                MenuRenderer::CustomOverlay overlay{};
-                overlay.x = snap.x;
-                overlay.y = snap.y;
-                overlay.text = snap.text;
-                overlays.push_back(std::move(overlay));
-            }
-            renderer_->SetCustomOverlays(overlays);
-        }
-        else
-        {
-            renderer_->SetCustomOverlays({});
-        }
 
         renderer_->Render(running_);
         if (terminal_) {
@@ -325,12 +357,29 @@ void Application::Run()
         glClearColor(0, 0, 0, 0);
         glClear(GL_COLOR_BUFFER_BIT);
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+        eglWaitGL();
         auto before_swap = std::chrono::steady_clock::now();
-        if (!eglSwapBuffers(egl_display_, egl_surface_))
+    if (!eglSwapBuffers(egl_display_, egl_surface_))
+    {
+        EGLint egl_err = eglGetError();
+        std::fprintf(stderr, "[AMLgsMenu] eglSwapBuffers failed (err=0x%04x), stopping loop\n",
+                     static_cast<unsigned int>(egl_err));
+        EGLint width = 0, height = 0;
+        if (egl_surface_ != EGL_NO_SURFACE &&
+            eglQuerySurface(egl_display_, egl_surface_, EGL_WIDTH, &width) &&
+            eglQuerySurface(egl_display_, egl_surface_, EGL_HEIGHT, &height))
         {
-            std::fprintf(stderr, "[AMLgsMenu] eglSwapBuffers failed, stopping loop\n");
-            running_ = false;
+            GLint current_tex = 0;
+            glGetIntegerv(GL_TEXTURE_BINDING_2D, &current_tex);
+            std::fprintf(stderr, "[AMLgsMenu] Surface query ok (%dx%d), bound texture id=%d\n",
+                         width, height, current_tex);
         }
+        else
+        {
+            std::fprintf(stderr, "[AMLgsMenu] Surface query failed, EGL surface may be invalid\n");
+        }
+        running_ = false;
+    }
 
         ++frame_counter;
         auto frame_end = std::chrono::steady_clock::now();
@@ -384,6 +433,39 @@ void Application::UpdateCommandRunner(bool menu_visible)
     }
 }
 
+std::shared_ptr<CommandTransport> Application::AcquireTransport() const
+{
+    std::lock_guard<std::mutex> lock(transport_mutex_);
+    return transport_;
+}
+
+void Application::RebuildTransport(MenuState::FirmwareType type)
+{
+    std::shared_ptr<CommandTransport> new_transport;
+    if (type == MenuState::FirmwareType::Official)
+    {
+        new_transport = std::make_shared<SshCommandClient>(ssh_host_, ssh_port_, ssh_user_, ssh_password_);
+    }
+    else
+    {
+        new_transport = std::make_shared<UdpCommandClient>();
+    }
+    {
+        std::lock_guard<std::mutex> lock(transport_mutex_);
+        transport_ = std::move(new_transport);
+        firmware_mode_ = type;
+    }
+}
+
+void Application::RestartRemoteSync()
+{
+    if (remote_sync_thread_.joinable())
+    {
+        remote_sync_thread_.join();
+    }
+    StartRemoteSync();
+}
+
 void Application::Shutdown()
 {
     if (!initialized_)
@@ -409,15 +491,22 @@ void Application::Shutdown()
     {
         terminal_.reset();
     }
+    if (telemetry_worker_)
+    {
+        telemetry_worker_->Stop();
+        telemetry_worker_.reset();
+    }
     if (signal_monitor_)
     {
-        signal_monitor_->Stop();
         signal_monitor_.reset();
     }
-    if (custom_osd_monitor_)
+    if (remote_sync_thread_.joinable())
     {
-        custom_osd_monitor_->Stop();
-        custom_osd_monitor_.reset();
+        remote_sync_thread_.join();
+    }
+    {
+        std::lock_guard<std::mutex> lock(transport_mutex_);
+        transport_.reset();
     }
 
     ImGui_ImplOpenGL3_Shutdown();
@@ -465,11 +554,11 @@ void Application::ApplyChannel()
     if (chs.empty())
         return;
     int ch = chs[menu_state_->ChannelIndex()];
-    if (udp_client_)
+    if (auto transport = AcquireTransport())
     {
         std::unordered_map<std::string, std::string> vars{{"CHANNEL", std::to_string(ch)}};
         auto cmd = command_templates_.Render("remote", "channel", vars);
-        if (!cmd.empty() && !udp_client_->Send(cmd, false))
+        if (!cmd.empty() && !transport->Send(cmd, false))
         {
             std::fprintf(stderr, "[AMLgsMenu] Failed to send channel command\n");
         }
@@ -480,12 +569,12 @@ void Application::ApplyChannel()
 void Application::ApplyBandwidth()
 {
     int bw = (menu_state_->BandwidthIndex() == 0) ? 10 : (menu_state_->BandwidthIndex() == 1 ? 20 : 40);
-    if (udp_client_)
+    if (auto transport = AcquireTransport())
     {
         std::unordered_map<std::string, std::string> vars{
             {"BANDWIDTH", std::to_string(bw)}};
         auto cmd = command_templates_.Render("remote", "bandwidth", vars);
-        if (!cmd.empty() && !udp_client_->Send(cmd, false))
+        if (!cmd.empty() && !transport->Send(cmd, false))
         {
             std::fprintf(stderr, "[AMLgsMenu] Failed to send bandwidth command\n");
         }
@@ -498,17 +587,32 @@ void Application::ApplySkyMode()
     if (sky_modes.empty())
         return;
     VideoMode mode = sky_modes[menu_state_->SkyModeIndex()];
-    if (udp_client_)
+    if (auto transport = AcquireTransport())
     {
         std::unordered_map<std::string, std::string> vars{
             {"WIDTH", std::to_string(mode.width)},
             {"HEIGHT", std::to_string(mode.height)},
             {"FPS", std::to_string(mode.refresh ? mode.refresh : 60)}};
         auto cmd = command_templates_.Render("remote", "sky_mode", vars);
-        if (!cmd.empty() && !udp_client_->Send(cmd, false))
+        if (!cmd.empty() && !transport->Send(cmd, false))
         {
             std::fprintf(stderr, "[AMLgsMenu] Failed to send sky mode command\n");
         }
+    }
+}
+
+void Application::ApplyGroundDisplayMode(const std::string &label)
+{
+    std::ofstream ofs("/sys/class/display/mode");
+    if (!ofs.is_open())
+    {
+        std::fprintf(stderr, "[AMLgsMenu] Failed to open /sys/class/display/mode for writing\n");
+        return;
+    }
+    ofs << label << std::endl;
+    if (!ofs.good())
+    {
+        std::fprintf(stderr, "[AMLgsMenu] Failed to write ground display mode '%s'\n", label.c_str());
     }
 }
 
@@ -519,12 +623,12 @@ void Application::ApplyBitrate()
         return;
     int br_mbps = bitrates[menu_state_->BitrateIndex()];
     int br_kbps = br_mbps * 1024; // CLI expects kbps; e.g. 2 -> 2048
-    if (udp_client_)
+    if (auto transport = AcquireTransport())
     {
         std::unordered_map<std::string, std::string> vars{
             {"BITRATE_KBPS", std::to_string(br_kbps)}};
         auto cmd = command_templates_.Render("remote", "bitrate", vars);
-        if (!cmd.empty() && !udp_client_->Send(cmd, false))
+        if (!cmd.empty() && !transport->Send(cmd, false))
         {
             std::fprintf(stderr, "[AMLgsMenu] Failed to send bitrate command\n");
         }
@@ -537,14 +641,14 @@ void Application::ApplySkyPower()
     if (powers.empty())
         return;
     int p = powers[menu_state_->SkyPowerIndex()];
-    if (udp_client_)
+    if (auto transport = AcquireTransport())
     {
         int tx_pwr = p * 50;
         std::unordered_map<std::string, std::string> vars{
             {"POWER", std::to_string(p)},
             {"TXPOWER", std::to_string(tx_pwr)}};
         auto cmd = command_templates_.Render("remote", "sky_power", vars);
-        if (!cmd.empty() && !udp_client_->Send(cmd, false))
+        if (!cmd.empty() && !transport->Send(cmd, false))
         {
             std::fprintf(stderr, "[AMLgsMenu] Failed to send tx power command\n");
         }
@@ -593,6 +697,31 @@ void Application::ApplyLocalMonitorPower(int power_level)
     {
         cmd_runner_->Enqueue(cmd);
     }
+}
+
+bool Application::SendRecordingCommand(bool enable)
+{
+    int sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock < 0)
+    {
+        std::perror("[AMLgsMenu] socket(record)");
+        return false;
+    }
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(5612);
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    const char *payload = enable ? "record=1" : "record=0";
+    ssize_t sent = sendto(sock, payload, std::strlen(payload), 0,
+                          reinterpret_cast<const sockaddr *>(&addr), sizeof(addr));
+    if (sent < 0)
+    {
+        std::perror("[AMLgsMenu] sendto(record)");
+        close(sock);
+        return false;
+    }
+    close(sock);
+    return true;
 }
 
 bool Application::InitFramebuffer(FbContext &fb)
@@ -1161,6 +1290,235 @@ void Application::LoadConfig()
         else if (v == "cn")
             menu_state_->SetLanguage(MenuState::Language::CN);
     }
+    auto it_fw = config_kv_.find("firmware");
+    if (it_fw != config_kv_.end())
+    {
+        std::string v = it_fw->second;
+        for (auto &c : v)
+            c = static_cast<char>(tolower(c));
+        if (v == "official")
+        {
+            menu_state_->SetFirmwareType(MenuState::FirmwareType::Official);
+        }
+        else
+        {
+            menu_state_->SetFirmwareType(MenuState::FirmwareType::CCEdition);
+        }
+    }
+}
+
+void Application::StartRemoteSync()
+{
+    if (remote_sync_thread_.joinable())
+    {
+        return;
+    }
+    auto transport = AcquireTransport();
+    if (!transport)
+    {
+        return;
+    }
+    remote_sync_thread_ = std::thread([this, transport]() {
+        RemoteStateSnapshot snapshot{};
+        if (CollectRemoteState(snapshot, transport))
+        {
+            std::lock_guard<std::mutex> lock(remote_state_mutex_);
+            pending_remote_state_ = snapshot;
+            remote_sync_ready_ = true;
+        }
+    });
+}
+
+void Application::DrainRemoteState()
+{
+    RemoteStateSnapshot snapshot{};
+    bool apply = false;
+    {
+        std::lock_guard<std::mutex> lock(remote_state_mutex_);
+        if (remote_sync_ready_)
+        {
+            snapshot = pending_remote_state_;
+            remote_sync_ready_ = false;
+            apply = true;
+        }
+    }
+    if (apply)
+    {
+        ApplyRemoteStateSnapshot(snapshot);
+    }
+}
+
+bool Application::CollectRemoteState(RemoteStateSnapshot &snapshot,
+                                     const std::shared_ptr<CommandTransport> &transport)
+{
+    if (!transport)
+    {
+        return false;
+    }
+    auto try_parse_int = [](const std::string &text, int &value) -> bool {
+        try
+        {
+            value = std::stoi(text);
+            return true;
+        }
+        catch (const std::exception &)
+        {
+            return false;
+        }
+    };
+
+    bool any = false;
+    std::string value;
+    if (QueryRemoteValue("channel", value, transport))
+    {
+        int ch = 0;
+        if (try_parse_int(value, ch))
+        {
+            snapshot.has_channel = true;
+            snapshot.channel = ch;
+            any = true;
+        }
+    }
+    if (QueryRemoteValue("bandwidth", value, transport))
+    {
+        int bw = 0;
+        if (try_parse_int(value, bw))
+        {
+            snapshot.has_bandwidth = true;
+            snapshot.bandwidth = bw;
+            any = true;
+        }
+    }
+    if (QueryRemoteValue("sky_power", value, transport))
+    {
+        int p = 0;
+        if (try_parse_int(value, p))
+        {
+            snapshot.has_power = true;
+            snapshot.power = p;
+            any = true;
+        }
+    }
+    if (QueryRemoteValue("bitrate", value, transport))
+    {
+        int kbps = 0;
+        if (try_parse_int(value, kbps))
+        {
+            snapshot.has_bitrate = true;
+            snapshot.bitrate_kbps = kbps;
+            any = true;
+        }
+    }
+    std::string size_value;
+    std::string fps_value;
+    bool have_size = QueryRemoteValue("sky_size", size_value, transport);
+    bool have_fps = QueryRemoteValue("sky_fps", fps_value, transport);
+    if (have_size && have_fps)
+    {
+        int width = 0;
+        int height = 0;
+        int fps = 0;
+        if (std::sscanf(size_value.c_str(), "%dx%d", &width, &height) == 2 && try_parse_int(fps_value, fps))
+        {
+            snapshot.has_sky_mode = true;
+            snapshot.width = width;
+            snapshot.height = height;
+            snapshot.fps = fps;
+            any = true;
+        }
+    }
+    return any;
+}
+
+void Application::ApplyRemoteStateSnapshot(const RemoteStateSnapshot &snapshot)
+{
+    if (!menu_state_)
+        return;
+    if (snapshot.has_channel)
+    {
+        int idx = FindChannelIndex(snapshot.channel);
+        if (idx >= 0)
+        {
+            menu_state_->SetChannelIndex(idx);
+            config_kv_["channel"] = std::to_string(snapshot.channel);
+            std::fprintf(stdout, "[AMLgsMenu] Remote channel synced: %d\n", snapshot.channel);
+        }
+    }
+    if (snapshot.has_bandwidth)
+    {
+        int bw = snapshot.bandwidth;
+        int idx = -1;
+        if (bw == 10)
+            idx = 0;
+        else if (bw == 20)
+            idx = 1;
+        else if (bw == 40)
+            idx = 2;
+        if (idx >= 0)
+        {
+            menu_state_->SetBandwidthIndex(idx);
+            config_kv_["bandwidth"] = std::to_string(bw);
+            std::fprintf(stdout, "[AMLgsMenu] Remote bandwidth synced: %d MHz\n", bw);
+        }
+    }
+    if (snapshot.has_power)
+    {
+        int idx = FindPowerIndex(snapshot.power);
+        if (idx >= 0)
+        {
+            menu_state_->SetSkyPowerIndex(idx);
+            menu_state_->SetGroundPowerIndex(idx);
+            config_kv_["driver_txpower_override"] = std::to_string(snapshot.power);
+            std::fprintf(stdout, "[AMLgsMenu] Remote TX power synced: %d\n", snapshot.power);
+        }
+    }
+    if (snapshot.has_bitrate)
+    {
+        int kbps = snapshot.bitrate_kbps;
+        int mbps = static_cast<int>(std::round(static_cast<double>(kbps) / 1024.0));
+        if (mbps < 1)
+            mbps = 1;
+        int idx = FindBitrateIndex(mbps);
+        if (idx >= 0)
+        {
+            menu_state_->SetBitrateIndex(idx);
+            std::fprintf(stdout, "[AMLgsMenu] Remote bitrate synced: %d kbps\n", kbps);
+        }
+    }
+    if (snapshot.has_sky_mode)
+    {
+        int idx = FindSkyModeIndex(snapshot.width, snapshot.height, snapshot.fps);
+        if (idx >= 0)
+        {
+            menu_state_->SetSkyModeIndex(idx);
+            std::fprintf(stdout, "[AMLgsMenu] Remote sky mode synced: %dx%d @ %dHz\n",
+                         snapshot.width, snapshot.height, snapshot.fps);
+        }
+    }
+}
+
+bool Application::QueryRemoteValue(const std::string &key, std::string &out,
+                                   const std::shared_ptr<CommandTransport> &transport)
+{
+    if (!transport)
+        return false;
+    auto cmd = command_templates_.Render("remote_query", key, {});
+    if (cmd.empty())
+        return false;
+    std::vector<std::string> response;
+    if (!transport->SendWithReply(cmd, response, 1000))
+        return false;
+    for (const auto &line : response)
+    {
+        auto trimmed = TrimCopy(line);
+        if (trimmed.empty())
+            continue;
+        if (trimmed == "timeout")
+            continue;
+        out = trimmed;
+        return true;
+    }
+    return false;
 }
 
 void Application::SaveConfigValue(const std::string &key, const std::string &value)
@@ -1203,6 +1561,30 @@ int Application::FindGroundModeIndex(const std::string &label) const
     for (size_t i = 0; i < modes.size(); ++i)
     {
         if (modes[i].label == label)
+            return static_cast<int>(i);
+    }
+    return -1;
+}
+
+int Application::FindSkyModeIndex(int width, int height, int refresh) const
+{
+    const auto &modes = menu_state_->SkyModes();
+    for (size_t i = 0; i < modes.size(); ++i)
+    {
+        if (modes[i].width == width && modes[i].height == height && modes[i].refresh == refresh)
+        {
+            return static_cast<int>(i);
+        }
+    }
+    return -1;
+}
+
+int Application::FindBitrateIndex(int bitrate_mbps) const
+{
+    const auto &bitrates = menu_state_->Bitrates();
+    for (size_t i = 0; i < bitrates.size(); ++i)
+    {
+        if (bitrates[i] == bitrate_mbps)
             return static_cast<int>(i);
     }
     return -1;

@@ -92,6 +92,14 @@ void MenuState::SetLanguage(Language lang) {
     NotifyChange(SettingType::Language);
 }
 
+void MenuState::SetFirmwareType(FirmwareType type) {
+    if (firmware_type_ == type) {
+        return;
+    }
+    firmware_type_ = type;
+    NotifyChange(SettingType::Firmware);
+}
+
 void MenuState::ToggleRecording() {
     bool new_value = !recording_;
     if (new_value == recording_) {

@@ -34,6 +34,8 @@ public:
         float ground_temp_c = 0.0f;
         float roll_deg = 0.0f;
         float pitch_deg = 0.0f;
+        float ground_batt_percent = 0.0f;
+        bool has_ground_batt = false;
     };
 
     MenuRenderer(MenuState &state, bool use_mock, std::function<TelemetryData()> provider,
@@ -41,13 +43,6 @@ public:
     ~MenuRenderer();
 
     void Render(bool &running_flag);
-    struct CustomOverlay {
-        float x = 0.0f;
-        float y = 0.0f;
-        std::string text;
-    };
-    void SetCustomOverlays(const std::vector<CustomOverlay> &overlays);
-
 private:
     void DrawOsd(const ImGuiViewport *viewport, const TelemetryData &data) const;
     void DrawMenu(const ImGuiViewport *viewport, bool &running_flag);
@@ -69,5 +64,4 @@ private:
     ImTextureID icon_temp_ground_{};
     std::function<void()> toggle_terminal_;
     std::function<bool()> terminal_visible_;
-    std::vector<CustomOverlay> custom_overlays_;
 };
