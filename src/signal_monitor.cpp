@@ -3,9 +3,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <fstream>
-#include <iostream>
-#include <iterator>
 #include <map>
 #include <stdexcept>
 #include <vector>
@@ -42,6 +39,9 @@ bool SignalMonitor::UpdateSnapshot()
     }
 
     std::map<uint64_t, float> antenna_data;
+    uint64_t video_bytes = 0;
+    uint64_t first_ts = 0;
+    uint64_t last_ts = 0;
     std::chrono::steady_clock::time_point log_ts = std::chrono::steady_clock::now();
     char buffer[1024];
     bool saw_pkt = false;
@@ -51,7 +51,7 @@ bool SignalMonitor::UpdateSnapshot()
     auto flush_entry = [&]() {
         if (!current_msg.empty())
         {
-            ProcessEntry(current_pid, current_msg, antenna_data, saw_pkt);
+            ProcessEntry(current_pid, current_msg, antenna_data, saw_pkt, video_bytes, first_ts, last_ts);
         }
         current_pid = -1;
         current_msg.clear();
@@ -115,64 +115,50 @@ bool SignalMonitor::UpdateSnapshot()
         latest_ = snapshot;
     }
 
-    if (saw_pkt)
+    if (!saw_pkt)
+        return true;
+
+    auto now = std::chrono::steady_clock::now();
+    PacketRateSnapshot rate{};
+    rate.timestamp = now;
+    auto &state = rate_states_["video"];
+
+    double dt = 0.0;
+    if (last_ts > first_ts)
     {
-        std::unordered_map<std::string, uint64_t> byte_data;
-        for (const auto &entry : pid_bytes_)
-        {
-            auto info_it = pid_cache_.find(entry.first);
-            if (info_it == pid_cache_.end())
-                continue;
-            const auto &info = info_it->second;
-            if (!info.resolved || info.cls == StreamClass::Unknown)
-                continue;
-            byte_data[ClassKey(info.cls)] += entry.second;
-        }
-
-        if (byte_data.empty())
-            return true;
-
-        auto now = std::chrono::steady_clock::now();
-        PacketRateSnapshot rate{};
-        rate.timestamp = now;
-
-        auto calc_rate = [&](const std::string &name) -> float {
-            auto it = byte_data.find(name);
-            if (it == byte_data.end())
-                return 0.0f;
-            auto &state = rate_states_[name];
-            float mbps = 0.0f;
-            if (state.valid)
-            {
-                double dt = std::chrono::duration<double>(now - state.ts).count();
-                if (dt > 0.0 && it->second >= state.bytes)
-                {
-                    uint64_t delta = it->second - state.bytes;
-                    mbps = static_cast<float>((static_cast<double>(delta) * 8.0) / (1024.0 * 1024.0) / dt);
-                }
-            }
-            state.bytes = it->second;
-            state.ts = now;
-            state.valid = true;
-            return mbps;
-        };
-
-        rate.primary_mbps = calc_rate("video");
-        rate.secondary_mbps = calc_rate("aux");
-
-        rate.valid = (rate.primary_mbps > 0.0f || rate.secondary_mbps > 0.0f);
-
-        std::lock_guard<std::mutex> lock(mutex_);
-        latest_rate_ = rate;
+        dt = static_cast<double>(last_ts - first_ts) / 1000.0;
     }
+    if (dt <= 0.0)
+    {
+        if (state.valid)
+            dt = std::chrono::duration<double>(now - state.ts).count();
+    }
+    if (dt <= 0.0)
+    {
+        dt = 1.0;
+    }
+
+    rate.primary_mbps = static_cast<float>((static_cast<double>(video_bytes) * 8.0) /
+                                           (1024.0 * 1024.0) / dt);
+    state.bytes = video_bytes;
+    state.ts = now;
+    state.valid = true;
+    rate.valid = (video_bytes > 0);
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    latest_rate_ = rate;
 
     return true;
 }
 
 void SignalMonitor::ProcessEntry(pid_t pid, const std::string &message,
                                  std::map<uint64_t, float> &antenna_data,
-                                 bool &saw_pkt)
+                                 bool &saw_pkt,
+                                 uint64_t &video_bytes,
+                                 uint64_t &first_ts,
+                                 uint64_t &last_ts)
 {
+    (void)pid;
     if (message.empty())
         return;
 
@@ -202,109 +188,38 @@ void SignalMonitor::ProcessEntry(pid_t pid, const std::string &message,
     {
         if (fields.size() < 3 || pid <= 0)
             return;
-        auto stats = SignalMonitor::SplitString(fields[2], ':');
-        if (stats.size() < 9)
-            return;
+        uint64_t log_ts = 0;
         try
         {
-            auto info = ResolvePidInfo(pid);
-            if (!info.resolved || info.cls == StreamClass::Unknown)
-                return;
-            uint64_t bytes_out = static_cast<uint64_t>(std::stoull(stats[8]));
-            pid_bytes_[pid] = bytes_out;
-            saw_pkt = true;
+            log_ts = static_cast<uint64_t>(std::stoull(fields[0]));
+        }
+        catch (const std::exception &)
+        {
+            log_ts = 0;
+        }
+
+        auto stats = SignalMonitor::SplitString(fields[2], ':');
+        if (stats.size() < 11)
+            return;
+        uint64_t bytes_out = 0;
+        try
+        {
+            bytes_out = static_cast<uint64_t>(std::stoull(stats.back()));
         }
         catch (const std::exception &)
         {
             return;
         }
-    }
-}
 
-SignalMonitor::ProcessInfo SignalMonitor::ResolvePidInfo(pid_t pid)
-{
-    auto it = pid_cache_.find(pid);
-    if (it != pid_cache_.end() && it->second.resolved)
-    {
-        return it->second;
-    }
-
-    ProcessInfo info;
-    info.resolved = true;
-
-    std::string path = "/proc/" + std::to_string(pid) + "/cmdline";
-    std::ifstream file(path, std::ios::binary);
-    if (!file)
-    {
-        pid_cache_[pid] = info;
-        return info;
-    }
-
-    std::string data((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-    file.close();
-
-    std::vector<std::string> args;
-    size_t start = 0;
-    for (size_t i = 0; i < data.size(); ++i)
-    {
-        if (data[i] == '\0')
+        video_bytes += bytes_out;
+        if (log_ts > 0)
         {
-            if (i > start)
-            {
-                args.emplace_back(data.data() + start, i - start);
-            }
-            start = i + 1;
+            if (first_ts == 0 || log_ts < first_ts)
+                first_ts = log_ts;
+            if (log_ts > last_ts)
+                last_ts = log_ts;
         }
-    }
-    if (start < data.size())
-    {
-        args.emplace_back(data.data() + start, data.size() - start);
-    }
-
-    for (size_t i = 0; i < args.size(); ++i)
-    {
-        if (args[i] == "-p" && (i + 1) < args.size())
-        {
-            try
-            {
-                info.stream_id = std::stoi(args[i + 1], nullptr, 0);
-            }
-            catch (const std::exception &)
-            {
-                info.stream_id = -1;
-            }
-            break;
-        }
-    }
-
-    if (info.stream_id >= 0)
-    {
-        info.cls = ClassFromStream(info.stream_id);
-    }
-
-    pid_cache_[pid] = info;
-    return info;
-}
-
-SignalMonitor::StreamClass SignalMonitor::ClassFromStream(int stream_id)
-{
-    if (stream_id >= 0x00 && stream_id <= 0x0f)
-        return StreamClass::Video;
-    if ((stream_id >= 0x10 && stream_id <= 0x1f) || (stream_id >= 0x20 && stream_id <= 0x2f))
-        return StreamClass::Aux;
-    return StreamClass::Unknown;
-}
-
-std::string SignalMonitor::ClassKey(StreamClass cls)
-{
-    switch (cls)
-    {
-    case StreamClass::Video:
-        return "video";
-    case StreamClass::Aux:
-        return "aux";
-    default:
-        return "unknown";
+        saw_pkt = true;
     }
 }
 
