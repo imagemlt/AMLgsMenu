@@ -26,6 +26,18 @@
 #include <mutex>
 #include <memory>
 
+struct JoystickDevice
+{
+    int fd = -1;
+    std::string path;
+    std::vector<int16_t> axes;
+    std::vector<uint8_t> buttons;
+    bool dpad_up = false;
+    bool dpad_down = false;
+    bool dpad_left = false;
+    bool dpad_right = false;
+};
+
 struct ImFont;
 
 class Application
@@ -39,6 +51,7 @@ public:
     void SetCommandCfgPath(const std::string &path) { command_cfg_path_ = path; }
     void Run();
     void Shutdown();
+    void SaveConfig();
 
 private:
     struct RemoteStateSnapshot
@@ -71,7 +84,14 @@ private:
     static void LibinputClose(int fd, void *user_data);
     void ProcessInput(bool &running);
     void HandleLibinputEvent(struct libinput_event *event, bool &running);
+    void PollJoysticks(bool &running);
+    void ScanJoysticks();
+    void CloseJoysticks();
+    void RemoveJoystick(size_t index);
+    void HandleJoystickButton(int button, bool pressed);
+    void HandleJoystickAxis(JoystickDevice &dev, int axis, int16_t value);
     void UpdateDeltaTime();
+    bool configUpdated_ = false;
 
 public:
     void SetConfigPath(const std::string &path) { config_path_ = path; }
@@ -126,6 +146,7 @@ private:
     std::unique_ptr<CommandExecutor> cmd_runner_;
     std::unique_ptr<SignalMonitor> signal_monitor_;
     std::unique_ptr<TelemetryWorker> telemetry_worker_;
+    std::vector<JoystickDevice> joysticks_;
     bool use_mock_ = false;
     bool command_runner_active_ = false;
     std::unique_ptr<Terminal> terminal_;
@@ -145,4 +166,5 @@ private:
     std::mutex remote_state_mutex_;
     RemoteStateSnapshot pending_remote_state_{};
     bool remote_sync_ready_ = false;
+    std::chrono::steady_clock::time_point last_js_scan_{};
 };

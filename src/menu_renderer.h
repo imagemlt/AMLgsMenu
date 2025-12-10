@@ -3,14 +3,17 @@
 #include "menu_state.h"
 
 #include "imgui.h"
+
 #include <functional>
 #include <chrono>
 #include <string>
 #include <vector>
 
-class MenuRenderer {
+class MenuRenderer
+{
 public:
-    struct TelemetryData {
+    struct TelemetryData
+    {
         float ground_signal_a = 0.0f;
         float ground_signal_b = 0.0f;
         float rc_signal = 0.0f;
@@ -38,17 +41,19 @@ public:
         bool has_ground_batt = false;
     };
 
-    MenuRenderer(MenuState &state, bool use_mock, std::function<TelemetryData()> provider,
+    MenuRenderer(MenuState &state, bool &use_mock, std::function<TelemetryData()> provider,
                  std::function<void()> toggle_terminal = {}, std::function<bool()> terminal_visible = {});
     ~MenuRenderer();
 
     void Render(bool &running_flag);
+
 private:
     void DrawOsd(const ImGuiViewport *viewport, const TelemetryData &data) const;
     void DrawMenu(const ImGuiViewport *viewport, bool &running_flag);
     bool LoadIcon(const char *path, ImTextureID &out_id, int &out_w, int &out_h);
 
     MenuState &state_;
+    // Application &application_;
     bool use_mock_ = true;
     std::function<TelemetryData()> telemetry_provider_;
     TelemetryData cached_telemetry_{};
@@ -64,4 +69,8 @@ private:
     ImTextureID icon_temp_ground_{};
     std::function<void()> toggle_terminal_;
     std::function<bool()> terminal_visible_;
+    bool focus_open_to_confirm_ = false;
+    bool focus_confirm_to_open_ = false;
+    int kodi_popup_focus_index_ = 0;
+    bool kodi_popup_focus_dirty_ = false;
 };

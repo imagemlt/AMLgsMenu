@@ -15,6 +15,8 @@ public:
         float ground_temp_c = 0.0f;
         bool has_ground_temp = false;
         int output_fps = 0;
+        float hid_batt_percent = 0.0f;
+        bool has_hid_batt = false;
         std::chrono::steady_clock::time_point timestamp = std::chrono::steady_clock::time_point::min();
     };
 

@@ -15,6 +15,7 @@
 #include <png.h>
 #include <GLES2/gl2.h>
 #include <thread>
+#include <iostream>
 
 static MenuRenderer::TelemetryData BuildMockTelemetry(const MenuState &state)
 {
@@ -89,7 +90,7 @@ static MenuRenderer::TelemetryData BuildMockTelemetry(const MenuState &state)
     return data;
 }
 
-MenuRenderer::MenuRenderer(MenuState &state, bool use_mock, std::function<TelemetryData()> provider,
+MenuRenderer::MenuRenderer(MenuState &state, bool &use_mock, std::function<TelemetryData()> provider,
                            std::function<void()> toggle_terminal,
                            std::function<bool()> terminal_visible)
     : state_(state), use_mock_(use_mock), telemetry_provider_(std::move(provider)),
@@ -762,13 +763,40 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
                 [&]()
                 { state_.ToggleRecording(); });
 
-            draw_dual_row(
-                is_cn ? "\u6253\u5f00 KODI" : "Open KODI",
-                [&]()
-                { kodi_popup_requested = true; },
-                is_cn ? "\u786e\u8ba4" : "OK",
-                [&]()
-                { state_.ToggleMenuVisibility(); });
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::TextUnformatted(" ");
+            ImGui::TableSetColumnIndex(1);
+            if (focus_confirm_to_open_)
+            {
+                ImGui::SetKeyboardFocusHere();
+                focus_confirm_to_open_ = false;
+            }
+            if (ImGui::Button(is_cn ? "\u6253\u5f00 KODI" : "Open KODI", ImVec2(-1, 0)))
+            {
+                kodi_popup_requested = true;
+            }
+            if (ImGui::IsItemFocused() && ImGui::IsKeyPressed(ImGuiKey_DownArrow, false))
+            {
+                focus_open_to_confirm_ = true;
+            }
+            ImGui::TableSetColumnIndex(2);
+            ImGui::TextUnformatted(" ");
+            ImGui::TableSetColumnIndex(3);
+            if (focus_open_to_confirm_)
+            {
+                ImGui::SetKeyboardFocusHere();
+                focus_open_to_confirm_ = false;
+            }
+            if (ImGui::Button(is_cn ? "\u786e\u8ba4" : "OK", ImVec2(-1, 0)))
+            {
+                state_.ToggleMenuVisibility();
+                // application_.SaveConfig();
+            }
+            if (ImGui::IsItemFocused() && ImGui::IsKeyPressed(ImGuiKey_DownArrow, false))
+            {
+                focus_confirm_to_open_ = true;
+            }
 
             ImGui::EndTable();
         }
@@ -776,6 +804,8 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
 
         if (kodi_popup_requested)
         {
+            kodi_popup_focus_index_ = 0;
+            kodi_popup_focus_dirty_ = true;
             ImGui::OpenPopup("confirm_kodi");
         }
         ImGui::SetNextWindowSize(ImVec2(360, 0), ImGuiCond_FirstUseEver);
@@ -789,16 +819,35 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
                                     : "Opening KODI will close the video link process. Continue?";
             ImGui::TextWrapped("%s", msg);
             ImGui::Spacing();
+            if (ImGui::IsKeyPressed(ImGuiKey_DownArrow, false) || ImGui::IsKeyPressed(ImGuiKey_UpArrow, false))
+            {
+                kodi_popup_focus_index_ = 1 - kodi_popup_focus_index_;
+                kodi_popup_focus_dirty_ = true;
+            }
+            if (kodi_popup_focus_dirty_ && kodi_popup_focus_index_ == 0)
+            {
+                ImGui::SetKeyboardFocusHere();
+                kodi_popup_focus_dirty_ = false;
+            }
             if (ImGui::Button(is_cn ? "\u53d6\u6d88" : "Cancel", ImVec2(140, 0)))
             {
                 ImGui::CloseCurrentPopup();
+                kodi_popup_focus_index_ = 0;
+                kodi_popup_focus_dirty_ = true;
             }
             ImGui::SameLine();
+            if (kodi_popup_focus_dirty_ && kodi_popup_focus_index_ == 1)
+            {
+                ImGui::SetKeyboardFocusHere();
+                kodi_popup_focus_dirty_ = false;
+            }
             if (ImGui::Button(is_cn ? "\u786e\u8ba4" : "Confirm", ImVec2(140, 0)))
             {
                 std::system("bash -lc 'systemctl stop amldigitalfpv || true; systemctl start kodi2'"); // restart kodi and exit
                 running_flag = false;
                 ImGui::CloseCurrentPopup();
+                kodi_popup_focus_index_ = 0;
+                kodi_popup_focus_dirty_ = true;
             }
             ImGui::EndPopup();
         }

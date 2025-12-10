@@ -18,10 +18,13 @@
 #include <cstring>
 #include <fcntl.h>
 #include <fstream>
+#include <glob.h>
 #include <linux/fb.h>
 #include <linux/input-event-codes.h>
+#include <linux/joystick.h>
 #include <poll.h>
 #include <signal.h>
+#include <cerrno>
 #include <unordered_map>
 #include <vector>
 #include <sstream>
@@ -155,6 +158,8 @@ bool Application::Initialize(const std::string &font_path, bool use_mock,
         std::fprintf(stderr, "[AMLgsMenu] Failed to init libinput/udev\n");
         return false;
     }
+    ScanJoysticks();
+    last_js_scan_ = std::chrono::steady_clock::now();
     command_templates_.LoadFromFile(command_cfg_path_);
     cmd_runner_ = std::make_unique<CommandExecutor>();
 
@@ -240,6 +245,11 @@ bool Application::Initialize(const std::string &font_path, bool use_mock,
                 {
                     data.video_refresh_hz = snap.output_fps;
                 }
+                if (snap.has_hid_batt)
+                {
+                    data.has_ground_batt = true;
+                    data.ground_batt_percent = snap.hid_batt_percent;
+                }
             }
             else
             {
@@ -253,15 +263,11 @@ bool Application::Initialize(const std::string &font_path, bool use_mock,
         provider = nullptr;
     }
 
-    renderer_ = std::make_unique<MenuRenderer>(
-        *menu_state_, use_mock_, provider,
-        [this]()
-        {
+    renderer_ = std::make_unique<MenuRenderer>(*menu_state_, use_mock_, provider, [this]()
+                                               {
             if (terminal_)
-                terminal_->toggleVisibility();
-        },
-        [this]()
-        { return terminal_ && terminal_->isTerminalVisible(); });
+                terminal_->toggleVisibility(); }, [this]()
+                                               { return terminal_ && terminal_->isTerminalVisible(); });
 
     menu_state_->SetOnChangeCallback([this](MenuState::SettingType type)
                                      {
@@ -320,7 +326,8 @@ bool Application::Initialize(const std::string &font_path, bool use_mock,
         default:
             break;
         } });
-
+    // menu_state_->SetVisibilityChangeCallback([this](bool visible)
+    //                                          { if(!visible)this->SaveConfig(); });
     running_ = true;
     initialized_ = true;
     last_frame_time_ = std::chrono::steady_clock::now();
@@ -348,7 +355,8 @@ void Application::Run()
         ImGui::NewFrame();
 
         renderer_->Render(running_);
-        if (terminal_) {
+        if (terminal_)
+        {
             terminal_->render();
         }
 
@@ -359,27 +367,27 @@ void Application::Run()
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
         eglWaitGL();
         auto before_swap = std::chrono::steady_clock::now();
-    if (!eglSwapBuffers(egl_display_, egl_surface_))
-    {
-        EGLint egl_err = eglGetError();
-        std::fprintf(stderr, "[AMLgsMenu] eglSwapBuffers failed (err=0x%04x), stopping loop\n",
-                     static_cast<unsigned int>(egl_err));
-        EGLint width = 0, height = 0;
-        if (egl_surface_ != EGL_NO_SURFACE &&
-            eglQuerySurface(egl_display_, egl_surface_, EGL_WIDTH, &width) &&
-            eglQuerySurface(egl_display_, egl_surface_, EGL_HEIGHT, &height))
+        if (!eglSwapBuffers(egl_display_, egl_surface_))
         {
-            GLint current_tex = 0;
-            glGetIntegerv(GL_TEXTURE_BINDING_2D, &current_tex);
-            std::fprintf(stderr, "[AMLgsMenu] Surface query ok (%dx%d), bound texture id=%d\n",
-                         width, height, current_tex);
+            EGLint egl_err = eglGetError();
+            std::fprintf(stderr, "[AMLgsMenu] eglSwapBuffers failed (err=0x%04x), stopping loop\n",
+                         static_cast<unsigned int>(egl_err));
+            EGLint width = 0, height = 0;
+            if (egl_surface_ != EGL_NO_SURFACE &&
+                eglQuerySurface(egl_display_, egl_surface_, EGL_WIDTH, &width) &&
+                eglQuerySurface(egl_display_, egl_surface_, EGL_HEIGHT, &height))
+            {
+                GLint current_tex = 0;
+                glGetIntegerv(GL_TEXTURE_BINDING_2D, &current_tex);
+                std::fprintf(stderr, "[AMLgsMenu] Surface query ok (%dx%d), bound texture id=%d\n",
+                             width, height, current_tex);
+            }
+            else
+            {
+                std::fprintf(stderr, "[AMLgsMenu] Surface query failed, EGL surface may be invalid\n");
+            }
+            running_ = false;
         }
-        else
-        {
-            std::fprintf(stderr, "[AMLgsMenu] Surface query failed, EGL surface may be invalid\n");
-        }
-        running_ = false;
-    }
 
         ++frame_counter;
         auto frame_end = std::chrono::steady_clock::now();
@@ -475,6 +483,7 @@ void Application::Shutdown()
 
     initialized_ = false;
     running_ = false;
+    CloseJoysticks();
 
     if (mav_receiver_)
     {
@@ -558,9 +567,14 @@ void Application::ApplyChannel()
     {
         std::unordered_map<std::string, std::string> vars{{"CHANNEL", std::to_string(ch)}};
         auto cmd = command_templates_.Render("remote", "channel", vars);
-        if (!cmd.empty() && !transport->Send(cmd, false))
+        if (!cmd.empty() && cmd_runner_)
         {
-            std::fprintf(stderr, "[AMLgsMenu] Failed to send channel command\n");
+            cmd_runner_->EnqueueRemote([transport, cmd]()
+                                       {
+                if (!transport->Send(cmd, false))
+                {
+                    std::fprintf(stderr, "[AMLgsMenu] Failed to send channel command\n");
+                } });
         }
     }
     ApplyLocalMonitorChannel(ch);
@@ -574,9 +588,14 @@ void Application::ApplyBandwidth()
         std::unordered_map<std::string, std::string> vars{
             {"BANDWIDTH", std::to_string(bw)}};
         auto cmd = command_templates_.Render("remote", "bandwidth", vars);
-        if (!cmd.empty() && !transport->Send(cmd, false))
+        if (!cmd.empty() && cmd_runner_)
         {
-            std::fprintf(stderr, "[AMLgsMenu] Failed to send bandwidth command\n");
+            cmd_runner_->EnqueueRemote([transport, cmd]()
+                                       {
+                if (!transport->Send(cmd, false))
+                {
+                    std::fprintf(stderr, "[AMLgsMenu] Failed to send bandwidth command\n");
+                } });
         }
     }
 }
@@ -594,9 +613,14 @@ void Application::ApplySkyMode()
             {"HEIGHT", std::to_string(mode.height)},
             {"FPS", std::to_string(mode.refresh ? mode.refresh : 60)}};
         auto cmd = command_templates_.Render("remote", "sky_mode", vars);
-        if (!cmd.empty() && !transport->Send(cmd, false))
+        if (!cmd.empty() && cmd_runner_)
         {
-            std::fprintf(stderr, "[AMLgsMenu] Failed to send sky mode command\n");
+            cmd_runner_->EnqueueRemote([transport, cmd]()
+                                       {
+                if (!transport->Send(cmd, false))
+                {
+                    std::fprintf(stderr, "[AMLgsMenu] Failed to send sky mode command\n");
+                } });
         }
     }
 }
@@ -628,9 +652,14 @@ void Application::ApplyBitrate()
         std::unordered_map<std::string, std::string> vars{
             {"BITRATE_KBPS", std::to_string(br_kbps)}};
         auto cmd = command_templates_.Render("remote", "bitrate", vars);
-        if (!cmd.empty() && !transport->Send(cmd, false))
+        if (!cmd.empty() && cmd_runner_)
         {
-            std::fprintf(stderr, "[AMLgsMenu] Failed to send bitrate command\n");
+            cmd_runner_->EnqueueRemote([transport, cmd]()
+                                       {
+                if (!transport->Send(cmd, false))
+                {
+                    std::fprintf(stderr, "[AMLgsMenu] Failed to send bitrate command\n");
+                } });
         }
     }
 }
@@ -648,9 +677,14 @@ void Application::ApplySkyPower()
             {"POWER", std::to_string(p)},
             {"TXPOWER", std::to_string(tx_pwr)}};
         auto cmd = command_templates_.Render("remote", "sky_power", vars);
-        if (!cmd.empty() && !transport->Send(cmd, false))
+        if (!cmd.empty() && cmd_runner_)
         {
-            std::fprintf(stderr, "[AMLgsMenu] Failed to send tx power command\n");
+            cmd_runner_->EnqueueRemote([transport, cmd]()
+                                       {
+                if (!transport->Send(cmd, false))
+                {
+                    std::fprintf(stderr, "[AMLgsMenu] Failed to send tx power command\n");
+                } });
         }
     }
 }
@@ -680,7 +714,7 @@ void Application::ApplyLocalMonitorChannel(int channel)
     auto cmd = command_templates_.Render("local", "monitor_channel", vars);
     if (!cmd.empty() && cmd_runner_)
     {
-        cmd_runner_->Enqueue(cmd);
+        cmd_runner_->EnqueueShell(cmd);
     }
 }
 
@@ -695,7 +729,7 @@ void Application::ApplyLocalMonitorPower(int power_level)
     auto cmd = command_templates_.Render("local", "monitor_power", vars);
     if (!cmd.empty() && cmd_runner_)
     {
-        cmd_runner_->Enqueue(cmd);
+        cmd_runner_->EnqueueShell(cmd);
     }
 }
 
@@ -840,15 +874,24 @@ void Application::ProcessInput(bool &running)
         HandleLibinputEvent(event, running);
         libinput_event_destroy(event);
     }
+    PollJoysticks(running);
+    auto now = std::chrono::steady_clock::now();
+    if (now - last_js_scan_ > std::chrono::seconds(2))
+    {
+        ScanJoysticks();
+        last_js_scan_ = now;
+    }
 }
 
 void Application::HandleLibinputEvent(struct libinput_event *event, bool &running)
 {
     ImGuiIO &io = ImGui::GetIO();
-    auto add_key = [&](ImGuiKey key, bool down) {
+    auto add_key = [&](ImGuiKey key, bool down)
+    {
         io.AddKeyEvent(key, down);
     };
-    auto add_key_if_mapped = [&](uint32_t code, bool down) {
+    auto add_key_if_mapped = [&](uint32_t code, bool down)
+    {
         ImGuiKey mapped = ImGuiKey_None;
         if (code >= KEY_A && code <= KEY_Z)
         {
@@ -966,7 +1009,10 @@ void Application::HandleLibinputEvent(struct libinput_event *event, bool &runnin
         if (button == BTN_LEFT)
             io.MouseDown[0] = pressed;
         if (button == BTN_RIGHT && pressed)
+        {
             menu_state_->ToggleMenuVisibility();
+            UpdateCommandRunner(menu_state_->MenuVisible());
+        }
         break;
     }
     case LIBINPUT_EVENT_POINTER_AXIS:
@@ -988,7 +1034,8 @@ void Application::HandleLibinputEvent(struct libinput_event *event, bool &runnin
         bool down = (state == LIBINPUT_KEY_STATE_PRESSED);
         bool terminal_visible = terminal_ && terminal_->isTerminalVisible();
         bool menu_visible = menu_state_->MenuVisible();
-        auto handle_gamepad_nav = [&](uint32_t code, bool pressed) -> bool {
+        auto handle_gamepad_nav = [&](uint32_t code, bool pressed) -> bool
+        {
             if (!menu_visible)
                 return false;
             switch (code)
@@ -1018,10 +1065,12 @@ void Application::HandleLibinputEvent(struct libinput_event *event, bool &runnin
             if (!terminal_visible && (key == KEY_X || key == BTN_WEST))
             {
                 menu_state_->ToggleMenuVisibility();
+                UpdateCommandRunner(menu_state_->MenuVisible());
             }
             if (!terminal_visible && (key == KEY_LEFTALT || key == KEY_RIGHTALT))
             {
                 menu_state_->ToggleMenuVisibility();
+                UpdateCommandRunner(menu_state_->MenuVisible());
             }
             if (key == KEY_ESC)
             {
@@ -1118,73 +1167,201 @@ void Application::HandleLibinputEvent(struct libinput_event *event, bool &runnin
 
         if (down)
         {
-            auto emit_char = [&](ImWchar c) { io.AddInputCharacter(c); };
-            auto emit_printable = [&](uint32_t code, bool shift) -> bool {
+            auto emit_char = [&](ImWchar c)
+            { io.AddInputCharacter(c); };
+            auto emit_printable = [&](uint32_t code, bool shift) -> bool
+            {
                 switch (code)
                 {
-                case KEY_A: emit_char(shift ? 'A' : 'a'); return true;
-                case KEY_B: emit_char(shift ? 'B' : 'b'); return true;
-                case KEY_C: emit_char(shift ? 'C' : 'c'); return true;
-                case KEY_D: emit_char(shift ? 'D' : 'd'); return true;
-                case KEY_E: emit_char(shift ? 'E' : 'e'); return true;
-                case KEY_F: emit_char(shift ? 'F' : 'f'); return true;
-                case KEY_G: emit_char(shift ? 'G' : 'g'); return true;
-                case KEY_H: emit_char(shift ? 'H' : 'h'); return true;
-                case KEY_I: emit_char(shift ? 'I' : 'i'); return true;
-                case KEY_J: emit_char(shift ? 'J' : 'j'); return true;
-                case KEY_K: emit_char(shift ? 'K' : 'k'); return true;
-                case KEY_L: emit_char(shift ? 'L' : 'l'); return true;
-                case KEY_M: emit_char(shift ? 'M' : 'm'); return true;
-                case KEY_N: emit_char(shift ? 'N' : 'n'); return true;
-                case KEY_O: emit_char(shift ? 'O' : 'o'); return true;
-                case KEY_P: emit_char(shift ? 'P' : 'p'); return true;
-                case KEY_Q: emit_char(shift ? 'Q' : 'q'); return true;
-                case KEY_R: emit_char(shift ? 'R' : 'r'); return true;
-                case KEY_S: emit_char(shift ? 'S' : 's'); return true;
-                case KEY_T: emit_char(shift ? 'T' : 't'); return true;
-                case KEY_U: emit_char(shift ? 'U' : 'u'); return true;
-                case KEY_V: emit_char(shift ? 'V' : 'v'); return true;
-                case KEY_W: emit_char(shift ? 'W' : 'w'); return true;
-                case KEY_X: emit_char(shift ? 'X' : 'x'); return true;
-                case KEY_Y: emit_char(shift ? 'Y' : 'y'); return true;
-                case KEY_Z: emit_char(shift ? 'Z' : 'z'); return true;
-                case KEY_1: emit_char(shift ? '!' : '1'); return true;
-                case KEY_2: emit_char(shift ? '@' : '2'); return true;
-                case KEY_3: emit_char(shift ? '#' : '3'); return true;
-                case KEY_4: emit_char(shift ? '$' : '4'); return true;
-                case KEY_5: emit_char(shift ? '%' : '5'); return true;
-                case KEY_6: emit_char(shift ? '^' : '6'); return true;
-                case KEY_7: emit_char(shift ? '&' : '7'); return true;
-                case KEY_8: emit_char(shift ? '*' : '8'); return true;
-                case KEY_9: emit_char(shift ? '(' : '9'); return true;
-                case KEY_0: emit_char(shift ? ')' : '0'); return true;
-                case KEY_SPACE: emit_char(' '); return true;
-                case KEY_MINUS: emit_char(shift ? '_' : '-'); return true;
-                case KEY_EQUAL: emit_char(shift ? '+' : '='); return true;
-                case KEY_LEFTBRACE: emit_char(shift ? '{' : '['); return true;
-                case KEY_RIGHTBRACE: emit_char(shift ? '}' : ']'); return true;
-                case KEY_BACKSLASH: emit_char(shift ? '|' : '\\'); return true;
-                case KEY_SEMICOLON: emit_char(shift ? ':' : ';'); return true;
-                case KEY_APOSTROPHE: emit_char(shift ? '"' : '\''); return true;
-                case KEY_GRAVE: emit_char(shift ? '~' : '`'); return true;
-                case KEY_COMMA: emit_char(shift ? '<' : ','); return true;
-                case KEY_DOT: emit_char(shift ? '>' : '.'); return true;
-                case KEY_SLASH: emit_char(shift ? '?' : '/'); return true;
-                case KEY_KP0: emit_char('0'); return true;
-                case KEY_KP1: emit_char('1'); return true;
-                case KEY_KP2: emit_char('2'); return true;
-                case KEY_KP3: emit_char('3'); return true;
-                case KEY_KP4: emit_char('4'); return true;
-                case KEY_KP5: emit_char('5'); return true;
-                case KEY_KP6: emit_char('6'); return true;
-                case KEY_KP7: emit_char('7'); return true;
-                case KEY_KP8: emit_char('8'); return true;
-                case KEY_KP9: emit_char('9'); return true;
-                case KEY_KPPLUS: emit_char('+'); return true;
-                case KEY_KPMINUS: emit_char('-'); return true;
-                case KEY_KPASTERISK: emit_char('*'); return true;
-                case KEY_KPSLASH: emit_char('/'); return true;
-                case KEY_KPDOT: emit_char('.'); return true;
+                case KEY_A:
+                    emit_char(shift ? 'A' : 'a');
+                    return true;
+                case KEY_B:
+                    emit_char(shift ? 'B' : 'b');
+                    return true;
+                case KEY_C:
+                    emit_char(shift ? 'C' : 'c');
+                    return true;
+                case KEY_D:
+                    emit_char(shift ? 'D' : 'd');
+                    return true;
+                case KEY_E:
+                    emit_char(shift ? 'E' : 'e');
+                    return true;
+                case KEY_F:
+                    emit_char(shift ? 'F' : 'f');
+                    return true;
+                case KEY_G:
+                    emit_char(shift ? 'G' : 'g');
+                    return true;
+                case KEY_H:
+                    emit_char(shift ? 'H' : 'h');
+                    return true;
+                case KEY_I:
+                    emit_char(shift ? 'I' : 'i');
+                    return true;
+                case KEY_J:
+                    emit_char(shift ? 'J' : 'j');
+                    return true;
+                case KEY_K:
+                    emit_char(shift ? 'K' : 'k');
+                    return true;
+                case KEY_L:
+                    emit_char(shift ? 'L' : 'l');
+                    return true;
+                case KEY_M:
+                    emit_char(shift ? 'M' : 'm');
+                    return true;
+                case KEY_N:
+                    emit_char(shift ? 'N' : 'n');
+                    return true;
+                case KEY_O:
+                    emit_char(shift ? 'O' : 'o');
+                    return true;
+                case KEY_P:
+                    emit_char(shift ? 'P' : 'p');
+                    return true;
+                case KEY_Q:
+                    emit_char(shift ? 'Q' : 'q');
+                    return true;
+                case KEY_R:
+                    emit_char(shift ? 'R' : 'r');
+                    return true;
+                case KEY_S:
+                    emit_char(shift ? 'S' : 's');
+                    return true;
+                case KEY_T:
+                    emit_char(shift ? 'T' : 't');
+                    return true;
+                case KEY_U:
+                    emit_char(shift ? 'U' : 'u');
+                    return true;
+                case KEY_V:
+                    emit_char(shift ? 'V' : 'v');
+                    return true;
+                case KEY_W:
+                    emit_char(shift ? 'W' : 'w');
+                    return true;
+                case KEY_X:
+                    emit_char(shift ? 'X' : 'x');
+                    return true;
+                case KEY_Y:
+                    emit_char(shift ? 'Y' : 'y');
+                    return true;
+                case KEY_Z:
+                    emit_char(shift ? 'Z' : 'z');
+                    return true;
+                case KEY_1:
+                    emit_char(shift ? '!' : '1');
+                    return true;
+                case KEY_2:
+                    emit_char(shift ? '@' : '2');
+                    return true;
+                case KEY_3:
+                    emit_char(shift ? '#' : '3');
+                    return true;
+                case KEY_4:
+                    emit_char(shift ? '$' : '4');
+                    return true;
+                case KEY_5:
+                    emit_char(shift ? '%' : '5');
+                    return true;
+                case KEY_6:
+                    emit_char(shift ? '^' : '6');
+                    return true;
+                case KEY_7:
+                    emit_char(shift ? '&' : '7');
+                    return true;
+                case KEY_8:
+                    emit_char(shift ? '*' : '8');
+                    return true;
+                case KEY_9:
+                    emit_char(shift ? '(' : '9');
+                    return true;
+                case KEY_0:
+                    emit_char(shift ? ')' : '0');
+                    return true;
+                case KEY_SPACE:
+                    emit_char(' ');
+                    return true;
+                case KEY_MINUS:
+                    emit_char(shift ? '_' : '-');
+                    return true;
+                case KEY_EQUAL:
+                    emit_char(shift ? '+' : '=');
+                    return true;
+                case KEY_LEFTBRACE:
+                    emit_char(shift ? '{' : '[');
+                    return true;
+                case KEY_RIGHTBRACE:
+                    emit_char(shift ? '}' : ']');
+                    return true;
+                case KEY_BACKSLASH:
+                    emit_char(shift ? '|' : '\\');
+                    return true;
+                case KEY_SEMICOLON:
+                    emit_char(shift ? ':' : ';');
+                    return true;
+                case KEY_APOSTROPHE:
+                    emit_char(shift ? '"' : '\'');
+                    return true;
+                case KEY_GRAVE:
+                    emit_char(shift ? '~' : '`');
+                    return true;
+                case KEY_COMMA:
+                    emit_char(shift ? '<' : ',');
+                    return true;
+                case KEY_DOT:
+                    emit_char(shift ? '>' : '.');
+                    return true;
+                case KEY_SLASH:
+                    emit_char(shift ? '?' : '/');
+                    return true;
+                case KEY_KP0:
+                    emit_char('0');
+                    return true;
+                case KEY_KP1:
+                    emit_char('1');
+                    return true;
+                case KEY_KP2:
+                    emit_char('2');
+                    return true;
+                case KEY_KP3:
+                    emit_char('3');
+                    return true;
+                case KEY_KP4:
+                    emit_char('4');
+                    return true;
+                case KEY_KP5:
+                    emit_char('5');
+                    return true;
+                case KEY_KP6:
+                    emit_char('6');
+                    return true;
+                case KEY_KP7:
+                    emit_char('7');
+                    return true;
+                case KEY_KP8:
+                    emit_char('8');
+                    return true;
+                case KEY_KP9:
+                    emit_char('9');
+                    return true;
+                case KEY_KPPLUS:
+                    emit_char('+');
+                    return true;
+                case KEY_KPMINUS:
+                    emit_char('-');
+                    return true;
+                case KEY_KPASTERISK:
+                    emit_char('*');
+                    return true;
+                case KEY_KPSLASH:
+                    emit_char('/');
+                    return true;
+                case KEY_KPDOT:
+                    emit_char('.');
+                    return true;
                 default:
                     return false;
                 }
@@ -1199,6 +1376,249 @@ void Application::HandleLibinputEvent(struct libinput_event *event, bool &runnin
     }
     io.MousePos.x = std::max(0.0f, std::min(io.MousePos.x, static_cast<float>(fb_.width)));
     io.MousePos.y = std::max(0.0f, std::min(io.MousePos.y, static_cast<float>(fb_.height)));
+}
+
+void Application::ScanJoysticks()
+{
+    glob_t globbuf{};
+    if (glob("/dev/input/js*", 0, nullptr, &globbuf) != 0)
+    {
+        return;
+    }
+    for (size_t i = 0; i < globbuf.gl_pathc; ++i)
+    {
+        const std::string path = globbuf.gl_pathv[i];
+        bool exists = std::any_of(joysticks_.begin(), joysticks_.end(),
+                                  [&](const JoystickDevice &dev)
+                                  { return dev.path == path; });
+        if (exists)
+            continue;
+
+        int fd = open(path.c_str(), O_RDONLY | O_NONBLOCK);
+        if (fd < 0)
+            continue;
+
+        JoystickDevice dev;
+        dev.fd = fd;
+        dev.path = path;
+        unsigned char axes = 0;
+        if (ioctl(fd, JSIOCGAXES, &axes) < 0 || axes == 0)
+            axes = 8;
+        dev.axes.assign(axes, 0);
+        unsigned char buttons = 0;
+        if (ioctl(fd, JSIOCGBUTTONS, &buttons) < 0 || buttons == 0)
+            buttons = 16;
+        dev.buttons.assign(buttons, 0);
+        joysticks_.push_back(std::move(dev));
+        std::fprintf(stdout, "[AMLgsMenu] Gamepad attached: %s\n", path.c_str());
+        std::fflush(stdout);
+    }
+    globfree(&globbuf);
+}
+
+void Application::CloseJoysticks()
+{
+    for (auto &dev : joysticks_)
+    {
+        if (dev.fd >= 0)
+        {
+            close(dev.fd);
+            dev.fd = -1;
+        }
+    }
+    joysticks_.clear();
+}
+
+void Application::RemoveJoystick(size_t index)
+{
+    if (index >= joysticks_.size())
+        return;
+
+    ImGuiIO &io = ImGui::GetIO();
+    auto release_dir = [&](bool &state, ImGuiKey key)
+    {
+        if (state)
+        {
+            io.AddKeyEvent(key, false);
+            state = false;
+        }
+    };
+    release_dir(joysticks_[index].dpad_up, ImGuiKey_UpArrow);
+    release_dir(joysticks_[index].dpad_down, ImGuiKey_DownArrow);
+    release_dir(joysticks_[index].dpad_left, ImGuiKey_LeftArrow);
+    release_dir(joysticks_[index].dpad_right, ImGuiKey_RightArrow);
+
+    if (joysticks_[index].fd >= 0)
+    {
+        close(joysticks_[index].fd);
+    }
+    std::fprintf(stdout, "[AMLgsMenu] Gamepad removed: %s\n", joysticks_[index].path.c_str());
+    std::fflush(stdout);
+    joysticks_.erase(joysticks_.begin() + index);
+}
+
+void Application::PollJoysticks(bool &running)
+{
+    (void)running;
+    if (joysticks_.empty())
+        return;
+
+    std::vector<size_t> to_remove;
+    for (size_t i = 0; i < joysticks_.size(); ++i)
+    {
+        auto &dev = joysticks_[i];
+        pollfd pfd{};
+        pfd.fd = dev.fd;
+        pfd.events = POLLIN;
+        int pret = poll(&pfd, 1, 0);
+        if (pret < 0)
+        {
+            if (errno == EINTR)
+                continue;
+            to_remove.push_back(i);
+            continue;
+        }
+        if (pret == 0)
+            continue;
+
+        if (pfd.revents & (POLLERR | POLLHUP))
+        {
+            to_remove.push_back(i);
+            continue;
+        }
+
+        while (true)
+        {
+            js_event ev{};
+            ssize_t n = read(dev.fd, &ev, sizeof(ev));
+            if (n == static_cast<ssize_t>(sizeof(ev)))
+            {
+                uint8_t type = ev.type & ~JS_EVENT_INIT;
+                if (type == JS_EVENT_BUTTON)
+                {
+                    bool pressed = ev.value != 0;
+                    if (ev.number < dev.buttons.size())
+                        dev.buttons[ev.number] = pressed;
+                    HandleJoystickButton(ev.number, pressed);
+                }
+                else if (type == JS_EVENT_AXIS)
+                {
+                    if (ev.number < dev.axes.size())
+                        dev.axes[ev.number] = ev.value;
+                    HandleJoystickAxis(dev, ev.number, ev.value);
+                }
+            }
+            else
+            {
+                if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
+                    break;
+                to_remove.push_back(i);
+                break;
+            }
+        }
+    }
+
+    if (!to_remove.empty())
+    {
+        std::sort(to_remove.begin(), to_remove.end());
+        to_remove.erase(std::unique(to_remove.begin(), to_remove.end()), to_remove.end());
+        for (auto it = to_remove.rbegin(); it != to_remove.rend(); ++it)
+        {
+            RemoveJoystick(*it);
+        }
+    }
+}
+
+void Application::HandleJoystickButton(int button, bool pressed)
+{
+    if (!menu_state_)
+        return;
+    ImGuiIO &io = ImGui::GetIO();
+    bool menu_visible = menu_state_->MenuVisible();
+    bool terminal_visible = terminal_ && terminal_->isTerminalVisible();
+
+    switch (button)
+    {
+    case 0: // A
+        if (!menu_visible && pressed)
+        {
+            menu_state_->SetMenuVisible(true);
+        }
+        else if (menu_visible)
+        {
+            io.AddKeyEvent(ImGuiKey_Enter, pressed);
+        }
+        break;
+    case 1: // B
+        if (menu_visible)
+            io.AddKeyEvent(ImGuiKey_Escape, pressed);
+        break;
+    case 2: // X
+        if (pressed && !terminal_visible)
+        {
+            menu_state_->ToggleMenuVisibility();
+            UpdateCommandRunner(menu_state_->MenuVisible());
+        }
+        break;
+    case 3: // Y
+        if (pressed && !terminal_visible)
+            menu_state_->SetMenuVisible(true);
+        break;
+    case 6: // Back
+        if (pressed && !terminal_visible)
+        {
+            menu_state_->ToggleMenuVisibility();
+            UpdateCommandRunner(menu_state_->MenuVisible());
+        }
+        break;
+    default:
+        break;
+    }
+}
+
+void Application::HandleJoystickAxis(JoystickDevice &dev, int axis, int16_t value)
+{
+    if (!menu_state_)
+        return;
+    ImGuiIO &io = ImGui::GetIO();
+    bool menu_visible = menu_state_->MenuVisible();
+    auto release = [&](bool &state, ImGuiKey key)
+    {
+        if (state)
+        {
+            io.AddKeyEvent(key, false);
+            state = false;
+        }
+    };
+    if (!menu_visible)
+    {
+        release(dev.dpad_up, ImGuiKey_UpArrow);
+        release(dev.dpad_down, ImGuiKey_DownArrow);
+        release(dev.dpad_left, ImGuiKey_LeftArrow);
+        release(dev.dpad_right, ImGuiKey_RightArrow);
+        return;
+    }
+
+    constexpr int16_t kDeadZone = 12000;
+    auto update_dir = [&](bool &state, bool new_state, ImGuiKey key)
+    {
+        if (state != new_state)
+        {
+            io.AddKeyEvent(key, new_state);
+            state = new_state;
+        }
+    };
+
+    if (axis == 6)
+    {
+        update_dir(dev.dpad_left, value < -kDeadZone, ImGuiKey_LeftArrow);
+        update_dir(dev.dpad_right, value > kDeadZone, ImGuiKey_RightArrow);
+    }
+    else if (axis == 7)
+    {
+        update_dir(dev.dpad_up, value < -kDeadZone, ImGuiKey_UpArrow);
+        update_dir(dev.dpad_down, value > kDeadZone, ImGuiKey_DownArrow);
+    }
 }
 
 void Application::UpdateDeltaTime()
@@ -1318,15 +1738,15 @@ void Application::StartRemoteSync()
     {
         return;
     }
-    remote_sync_thread_ = std::thread([this, transport]() {
+    remote_sync_thread_ = std::thread([this, transport]()
+                                      {
         RemoteStateSnapshot snapshot{};
         if (CollectRemoteState(snapshot, transport))
         {
             std::lock_guard<std::mutex> lock(remote_state_mutex_);
             pending_remote_state_ = snapshot;
             remote_sync_ready_ = true;
-        }
-    });
+        } });
 }
 
 void Application::DrainRemoteState()
@@ -1355,7 +1775,8 @@ bool Application::CollectRemoteState(RemoteStateSnapshot &snapshot,
     {
         return false;
     }
-    auto try_parse_int = [](const std::string &text, int &value) -> bool {
+    auto try_parse_int = [](const std::string &text, int &value) -> bool
+    {
         try
         {
             value = std::stoi(text);
@@ -1524,13 +1945,38 @@ bool Application::QueryRemoteValue(const std::string &key, std::string &out,
 void Application::SaveConfigValue(const std::string &key, const std::string &value)
 {
     config_kv_[key] = value;
-    std::ofstream file(config_path_, std::ios::trunc);
-    if (!file.is_open())
-        return;
-    for (const auto &kv : config_kv_)
+    const std::string tmp = config_path_ + ".tmp" + std::to_string(std::rand());
+
     {
-        file << kv.first << "=" << kv.second << "\n";
+        std::ofstream file(tmp, std::ios::trunc);
+        if (!file.is_open())
+            return;
+
+        for (const auto &kv : config_kv_)
+            file << kv.first << "=" << kv.second << "\n";
     }
+    std::rename(tmp.c_str(), config_path_.c_str());
+    // configUpdated_ = true;
+}
+
+void Application::SaveConfig()
+{
+    // std::cout << "[AMLgsMenu] Saving config to " << config_path_ << " " << configUpdated_ << std::endl;
+    if (configUpdated_)
+    {
+        const std::string tmp = config_path_ + ".tmp";
+
+        {
+            std::ofstream file(tmp, std::ios::trunc);
+            if (!file.is_open())
+                return;
+
+            for (const auto &kv : config_kv_)
+                file << kv.first << "=" << kv.second << "\n";
+        }
+        std::rename(tmp.c_str(), config_path_.c_str());
+    }
+    configUpdated_ = false;
 }
 
 int Application::FindChannelIndex(int channel_val) const

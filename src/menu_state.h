@@ -7,11 +7,13 @@
 #include <string>
 #include <vector>
 
-class MenuState {
+class MenuState
+{
 public:
     MenuState(std::vector<VideoMode> sky_modes, std::vector<VideoMode> ground_modes);
 
-    enum class SettingType {
+    enum class SettingType
+    {
         Channel,
         Bandwidth,
         SkyMode,
@@ -24,17 +26,20 @@ public:
         Firmware,
     };
 
-    enum class Language {
+    enum class Language
+    {
         CN = 0,
         EN = 1,
     };
 
-    enum class FirmwareType {
+    enum class FirmwareType
+    {
         CCEdition = 0,
         Official = 1,
     };
 
     using SettingChangedCallback = std::function<void(SettingType)>;
+    using ChangeVisibilityCallback = std::function<void(bool)>;
 
     const std::vector<int> &Channels() const { return channels_; }
     const std::array<const char *, 3> &Bandwidths() const { return bandwidths_; }
@@ -65,11 +70,18 @@ public:
     void SetGroundPowerIndex(int index);
     void SetLanguage(Language lang);
     void SetFirmwareType(FirmwareType type);
-    void ToggleMenuVisibility() { menu_visible_ = !menu_visible_; }
+    void ToggleMenuVisibility()
+    {
+        menu_visible_ = !menu_visible_;
+        // if (!menu_visible_)
+        //     on_change_visibility_callback_(menu_visible_);
+    }
+    void SetMenuVisible(bool visible) { menu_visible_ = visible; }
 
     void ToggleRecording();
     void RequestExit() { should_exit_ = true; }
     void SetOnChangeCallback(SettingChangedCallback cb) { on_change_callback_ = std::move(cb); }
+    // void SetVisibilityChangeCallback(ChangeVisibilityCallback cb) { on_change_visibility_callback_ = std::move(cb); }
 
 private:
     static std::vector<int> BuildRange(int start, int end);
@@ -83,6 +95,7 @@ private:
     std::array<const char *, 3> bandwidths_{{"10 MHz", "20 MHz", "40 MHz"}};
 
     SettingChangedCallback on_change_callback_;
+    ChangeVisibilityCallback on_change_visibility_callback_;
 
     int channel_index_ = 0;
     int bandwidth_index_ = 0;
@@ -92,6 +105,7 @@ private:
     int sky_power_index_ = 0;
     int ground_power_index_ = 0;
     Language language_ = Language::CN;
+    // shared_ptr<Application> application_;
     FirmwareType firmware_type_ = FirmwareType::CCEdition;
     bool menu_visible_ = false;
     bool recording_ = false;
