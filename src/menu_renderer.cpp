@@ -90,7 +90,7 @@ static MenuRenderer::TelemetryData BuildMockTelemetry(const MenuState &state)
     return data;
 }
 
-MenuRenderer::MenuRenderer(MenuState &state, bool &use_mock, std::function<TelemetryData()> provider,
+MenuRenderer::MenuRenderer(MenuState &state, bool &use_mock, std::function<TelemetryData(TelemetryData)> provider,
                            std::function<void()> toggle_terminal,
                            std::function<bool()> terminal_visible)
     : state_(state), use_mock_(use_mock), telemetry_provider_(std::move(provider)),
@@ -215,7 +215,7 @@ void MenuRenderer::Render(bool &running_flag)
         }
         else if (telemetry_provider_)
         {
-            new_data = telemetry_provider_();
+            new_data = telemetry_provider_(cached_telemetry_);
 
             static auto last_ground_sample = std::chrono::steady_clock::time_point{};
             auto ms_ground = std::chrono::duration_cast<std::chrono::milliseconds>(now_tp - last_ground_sample).count();

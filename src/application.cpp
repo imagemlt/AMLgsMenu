@@ -219,10 +219,10 @@ bool Application::Initialize(const std::string &font_path, bool use_mock,
         mav_receiver_->Start();
     }
 
-    std::function<MenuRenderer::TelemetryData()> provider;
+    std::function<MenuRenderer::TelemetryData(MenuRenderer::TelemetryData)> provider;
     if (!use_mock_ && mav_receiver_)
     {
-        provider = [this]()
+        provider = [this](MenuRenderer::TelemetryData last_data)
         {
             auto data = ConvertTelemetry(mav_receiver_->Latest(), *menu_state_);
             if (telemetry_worker_)
@@ -230,6 +230,12 @@ bool Application::Initialize(const std::string &font_path, bool use_mock,
                 auto snap = telemetry_worker_->Latest();
                 if (snap.ground_signal.valid)
                 {
+                    // got signal,refresh sky
+                    if (last_data.ground_signal_a == 0.0f)
+                    {
+                        std::fprintf(stdout, "[AMLgsMenu] First ground signal received,refresh sky signal values\n");
+                        RestartRemoteSync();
+                    }
                     data.ground_signal_a = snap.ground_signal.signal_a;
                     data.ground_signal_b = snap.ground_signal.signal_b;
                 }

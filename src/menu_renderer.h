@@ -41,7 +41,7 @@ public:
         bool has_ground_batt = false;
     };
 
-    MenuRenderer(MenuState &state, bool &use_mock, std::function<TelemetryData()> provider,
+    MenuRenderer(MenuState &state, bool &use_mock, std::function<TelemetryData(TelemetryData)> provider,
                  std::function<void()> toggle_terminal = {}, std::function<bool()> terminal_visible = {});
     ~MenuRenderer();
 
@@ -55,7 +55,7 @@ private:
     MenuState &state_;
     // Application &application_;
     bool use_mock_ = true;
-    std::function<TelemetryData()> telemetry_provider_;
+    std::function<TelemetryData(TelemetryData)> telemetry_provider_;
     TelemetryData cached_telemetry_{};
     float last_osd_update_time_ = -1.0f;
     std::chrono::steady_clock::time_point last_osd_tp_{};
