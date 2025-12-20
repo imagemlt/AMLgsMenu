@@ -130,6 +130,7 @@ float ReadTemperatureC(const std::string &path) {
 
 std::vector<VideoMode> DefaultSkyModes() {
     return {
+        {"1920x1080 @ 120Hz", 1920, 1080, 120},
         {"1280x720 @ 120Hz", 1280, 720, 120},
         {"1920x1080 @ 90Hz", 1920, 1080, 90},
         {"1920x1080 @ 60Hz", 1920, 1080, 60},

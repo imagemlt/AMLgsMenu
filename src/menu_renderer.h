@@ -69,8 +69,10 @@ private:
     ImTextureID icon_temp_ground_{};
     std::function<void()> toggle_terminal_;
     std::function<bool()> terminal_visible_;
-    bool focus_open_to_confirm_ = false;
     bool focus_confirm_to_open_ = false;
+    bool focus_open_to_boot_ = false;
+    bool focus_boot_to_confirm_ = false;
+    bool focus_boot_to_open_ = false;
     int kodi_popup_focus_index_ = 0;
     bool kodi_popup_focus_dirty_ = false;
 };

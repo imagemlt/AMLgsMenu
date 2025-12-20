@@ -529,9 +529,9 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
 
 void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
 {
-    const ImVec2 menu_size = ImVec2(viewport->Size.x * 0.5f, viewport->Size.y * 0.45f);
+    const ImVec2 menu_size = ImVec2(viewport->Size.x * 0.5f, viewport->Size.y * 0.5f);
     const ImVec2 menu_pos = ImVec2(viewport->Pos.x + viewport->Size.x * 0.25f,
-                                   viewport->Pos.y + viewport->Size.y * 0.30f);
+                                   viewport->Pos.y + viewport->Size.y * 0.25f);
     const bool is_cn = state_.GetLanguage() == MenuState::Language::CN;
     bool kodi_popup_requested = false;
 
@@ -767,10 +767,11 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
             ImGui::TableSetColumnIndex(0);
             ImGui::TextUnformatted(" ");
             ImGui::TableSetColumnIndex(1);
-            if (focus_confirm_to_open_)
+            if (focus_confirm_to_open_ || focus_boot_to_open_)
             {
                 ImGui::SetKeyboardFocusHere();
                 focus_confirm_to_open_ = false;
+                focus_boot_to_open_ = false;
             }
             if (ImGui::Button(is_cn ? "\u6253\u5f00 KODI" : "Open KODI", ImVec2(-1, 0)))
             {
@@ -778,15 +779,45 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
             }
             if (ImGui::IsItemFocused() && ImGui::IsKeyPressed(ImGuiKey_DownArrow, false))
             {
-                focus_open_to_confirm_ = true;
+                focus_open_to_boot_ = true;
             }
             ImGui::TableSetColumnIndex(2);
             ImGui::TextUnformatted(" ");
             ImGui::TableSetColumnIndex(3);
-            if (focus_open_to_confirm_)
+            if (focus_open_to_boot_)
             {
                 ImGui::SetKeyboardFocusHere();
-                focus_open_to_confirm_ = false;
+                focus_open_to_boot_ = false;
+            }
+            if (ImGui::Button(is_cn ? "\u542f\u52a8\u5230\u5b89\u5353" : "Boot to Android", ImVec2(-1, 0)))
+            {
+                std::system("/sbin/rebootfromnand;reboot");
+                running_flag = false;
+            }
+            if (ImGui::IsItemFocused())
+            {
+                if (ImGui::IsKeyPressed(ImGuiKey_DownArrow, false))
+                {
+                    focus_boot_to_confirm_ = true;
+                }
+                else if (ImGui::IsKeyPressed(ImGuiKey_UpArrow, false))
+                {
+                    focus_boot_to_open_ = true;
+                }
+            }
+
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::TextUnformatted(" ");
+            ImGui::TableSetColumnIndex(1);
+            ImGui::Dummy(ImVec2(-1, 0));
+            ImGui::TableSetColumnIndex(2);
+            ImGui::TextUnformatted(" ");
+            ImGui::TableSetColumnIndex(3);
+            if (focus_boot_to_confirm_)
+            {
+                ImGui::SetKeyboardFocusHere();
+                focus_boot_to_confirm_ = false;
             }
             if (ImGui::Button(is_cn ? "\u786e\u8ba4" : "OK", ImVec2(-1, 0)))
             {
@@ -824,31 +855,45 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
                 kodi_popup_focus_index_ = 1 - kodi_popup_focus_index_;
                 kodi_popup_focus_dirty_ = true;
             }
-            if (kodi_popup_focus_dirty_ && kodi_popup_focus_index_ == 0)
+            const float button_width = 140.0f;
+            const float spacing = ImGui::GetStyle().ItemSpacing.x;
+            const float total_width = button_width * 2.0f + spacing;
+            const float region_width = ImGui::GetContentRegionAvail().x;
+            const float base_x = ImGui::GetCursorPosX();
+            if (region_width > total_width)
             {
-                ImGui::SetKeyboardFocusHere();
-                kodi_popup_focus_dirty_ = false;
+                ImGui::SetCursorPosX(base_x + (region_width - total_width) * 0.5f);
             }
-            if (ImGui::Button(is_cn ? "\u53d6\u6d88" : "Cancel", ImVec2(140, 0)))
-            {
+
+            auto render_popup_button = [&](int index, const char *label, auto &&handler) {
+                if (index > 0)
+                {
+                    ImGui::SameLine();
+                }
+                if (kodi_popup_focus_dirty_ && kodi_popup_focus_index_ == index)
+                {
+                    ImGui::SetKeyboardFocusHere();
+                    kodi_popup_focus_dirty_ = false;
+                }
+                if (ImGui::Button(label, ImVec2(button_width, 0)))
+                {
+                    handler();
+                }
+            };
+
+            render_popup_button(0, is_cn ? "\u53d6\u6d88" : "Cancel", [&]() {
                 ImGui::CloseCurrentPopup();
                 kodi_popup_focus_index_ = 0;
                 kodi_popup_focus_dirty_ = true;
-            }
-            ImGui::SameLine();
-            if (kodi_popup_focus_dirty_ && kodi_popup_focus_index_ == 1)
-            {
-                ImGui::SetKeyboardFocusHere();
-                kodi_popup_focus_dirty_ = false;
-            }
-            if (ImGui::Button(is_cn ? "\u786e\u8ba4" : "Confirm", ImVec2(140, 0)))
-            {
+            });
+
+            render_popup_button(1, is_cn ? "\u786e\u8ba4" : "Confirm", [&]() {
                 std::system("bash -lc 'systemctl stop amldigitalfpv || true; systemctl start kodi2'"); // restart kodi and exit
                 running_flag = false;
                 ImGui::CloseCurrentPopup();
                 kodi_popup_focus_index_ = 0;
                 kodi_popup_focus_dirty_ = true;
-            }
+            });
             ImGui::EndPopup();
         }
     }
