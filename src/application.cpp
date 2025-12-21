@@ -8,6 +8,9 @@
 #include "ssh_command_client.h"
 #include "command_templates.h"
 #include "terminal.h"
+#include "splash_data.h"
+
+#include <zlib.h>
 
 #include <EGL/egl.h>
 #include <algorithm>
@@ -40,6 +43,7 @@ Application::~Application() { Shutdown(); }
 namespace
 {
     constexpr float kOsdRefreshHz = 30.0f;
+    constexpr int kSplashHoldMs = 1500;
     std::string TrimCopy(const std::string &text)
     {
         size_t begin = 0;
@@ -280,9 +284,10 @@ bool Application::Initialize(const std::string &font_path, bool use_mock,
 
     renderer_ = std::make_unique<MenuRenderer>(*menu_state_, use_mock_, provider, [this]()
                                                {
-            if (terminal_)
-                terminal_->toggleVisibility(); }, [this]()
+        if (terminal_)
+            terminal_->toggleVisibility(); }, [this]()
                                                { return terminal_ && terminal_->isTerminalVisible(); });
+    InitSplash();
 
     menu_state_->SetOnChangeCallback([this](MenuState::SettingType type)
                                      {
@@ -387,6 +392,7 @@ void Application::Run()
         {
             terminal_->render();
         }
+        RenderSplashOverlay();
 
         ImGui::Render();
         glViewport(0, 0, fb_.width, fb_.height);
@@ -518,6 +524,7 @@ void Application::Shutdown()
         mav_receiver_->Stop();
         mav_receiver_.reset();
     }
+    ShutdownSplash();
     if (cmd_runner_)
     {
         cmd_runner_->Stop();
@@ -1655,6 +1662,148 @@ void Application::UpdateDeltaTime()
     auto now = std::chrono::steady_clock::now();
     io.DeltaTime = std::chrono::duration<float>(now - last_frame_time_).count();
     last_frame_time_ = now;
+}
+
+void Application::InitSplash()
+{
+    ShutdownSplash();
+    if (kSplashFrameCount <= 0)
+    {
+        return;
+    }
+    splash_textures_.resize(kSplashFrameCount, 0);
+    glGenTextures(kSplashFrameCount, splash_textures_.data());
+    std::vector<unsigned char> decoded;
+    for (int i = 0; i < kSplashFrameCount; ++i)
+    {
+        if (!DecompressSplashFrame(i, decoded))
+        {
+            continue;
+        }
+        glBindTexture(GL_TEXTURE_2D, splash_textures_[i]);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, kSplashWidth, kSplashHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE, decoded.data());
+    }
+    glBindTexture(GL_TEXTURE_2D, 0);
+    splash_frame_offsets_.clear();
+    splash_total_duration_ms_ = 0;
+    const int delay_len = static_cast<int>(sizeof(kSplashFrameDelayMs) / sizeof(kSplashFrameDelayMs[0]));
+    for (int i = 0; i < kSplashFrameCount; ++i)
+    {
+        splash_frame_offsets_.push_back(splash_total_duration_ms_);
+        int delay_ms = (i < delay_len) ? kSplashFrameDelayMs[i] : (delay_len > 0 ? kSplashFrameDelayMs[delay_len - 1] : 0);
+        splash_total_duration_ms_ += delay_ms;
+    }
+    splash_start_time_ = std::chrono::steady_clock::now();
+    splash_active_ = true;
+}
+
+void Application::RenderSplashOverlay()
+{
+    if (!splash_active_ || splash_textures_.empty())
+    {
+        return;
+    }
+    if (splash_total_duration_ms_ <= 0)
+    {
+        ShutdownSplash();
+        return;
+    }
+    auto now = std::chrono::steady_clock::now();
+    int elapsed = static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(now - splash_start_time_).count());
+    const int splash_end_with_hold = splash_total_duration_ms_ + kSplashHoldMs;
+    if (elapsed >= splash_end_with_hold)
+    {
+        ShutdownSplash();
+        return;
+    }
+    float alpha = 1.0f;
+    int frame = kSplashFrameCount - 1;
+    if (elapsed < splash_total_duration_ms_)
+    {
+        const int delay_len = static_cast<int>(sizeof(kSplashFrameDelayMs) / sizeof(kSplashFrameDelayMs[0]));
+        for (int i = 0; i < kSplashFrameCount; ++i)
+        {
+            int start = (i < static_cast<int>(splash_frame_offsets_.size())) ? splash_frame_offsets_[i] : 0;
+            int delay = (i < delay_len) ? kSplashFrameDelayMs[i] : (delay_len > 0 ? kSplashFrameDelayMs[delay_len - 1] : 0);
+            if (delay <= 0)
+            {
+                delay = 1;
+            }
+            if (elapsed < start + delay)
+            {
+                frame = i;
+                break;
+            }
+        }
+    }
+    else
+    {
+        const int hold_elapsed = elapsed - splash_total_duration_ms_;
+        if (kSplashHoldMs > 0)
+        {
+            alpha = 1.0f - static_cast<float>(hold_elapsed) / static_cast<float>(kSplashHoldMs);
+            if (alpha < 0.0f)
+            {
+                alpha = 0.0f;
+            }
+        }
+    }
+    if (frame < 0 || frame >= static_cast<int>(splash_textures_.size()))
+    {
+        return;
+    }
+    GLuint tex = splash_textures_[frame];
+    if (tex == 0)
+    {
+        return;
+    }
+    const ImGuiViewport *viewport = ImGui::GetMainViewport();
+    const float x = viewport->Pos.x + (viewport->Size.x - static_cast<float>(kSplashWidth)) * 0.5f;
+    const float y = viewport->Pos.y + (viewport->Size.y - static_cast<float>(kSplashHeight)) * 0.5f;
+    ImVec2 min(x, y);
+    ImVec2 max(x + static_cast<float>(kSplashWidth), y + static_cast<float>(kSplashHeight));
+    ImGui::GetBackgroundDrawList()->AddImage(
+        (ImTextureID)(intptr_t)(tex), min, max, ImVec2(0, 0), ImVec2(1, 1),
+        ImGui::GetColorU32(ImVec4(1.0f, 1.0f, 1.0f, alpha)));
+}
+
+void Application::ShutdownSplash()
+{
+    if (!splash_textures_.empty())
+    {
+        glDeleteTextures(static_cast<GLsizei>(splash_textures_.size()), splash_textures_.data());
+    }
+    splash_textures_.clear();
+    splash_frame_offsets_.clear();
+    splash_total_duration_ms_ = 0;
+    splash_active_ = false;
+    splash_start_time_ = {};
+}
+
+bool Application::DecompressSplashFrame(int index, std::vector<unsigned char> &buffer) const
+{
+    if (index < 0 || index >= kSplashFrameCount)
+    {
+        return false;
+    }
+    const auto &rec = kSplashFrameRecords[index];
+    if (rec.uncompressed_length == 0)
+    {
+        return false;
+    }
+    buffer.resize(rec.uncompressed_length);
+    uLongf dest_len = rec.uncompressed_length;
+    const unsigned char *src = kSplashCompressedData + rec.offset;
+    int ret = uncompress(buffer.data(), &dest_len, src, rec.length);
+    if (ret != Z_OK || dest_len != rec.uncompressed_length)
+    {
+        return false;
+    }
+    return true;
 }
 
 void Application::LoadConfig()

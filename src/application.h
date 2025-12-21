@@ -91,6 +91,10 @@ private:
     void HandleJoystickButton(int button, bool pressed);
     void HandleJoystickAxis(JoystickDevice &dev, int axis, int16_t value);
     void UpdateDeltaTime();
+    void InitSplash();
+    void RenderSplashOverlay();
+    void ShutdownSplash();
+    bool DecompressSplashFrame(int index, std::vector<unsigned char> &buffer) const;
     bool configUpdated_ = false;
 
 public:
@@ -152,6 +156,11 @@ private:
     std::unique_ptr<Terminal> terminal_;
     ImFont *ui_font_ = nullptr;
     ImFont *terminal_font_ = nullptr;
+    bool splash_active_ = false;
+    std::vector<GLuint> splash_textures_;
+    std::vector<int> splash_frame_offsets_;
+    int splash_total_duration_ms_ = 0;
+    std::chrono::steady_clock::time_point splash_start_time_{};
     MenuState::FirmwareType firmware_mode_ = MenuState::FirmwareType::CCEdition;
     const std::string ssh_host_ = "10.5.0.10";
     const uint16_t ssh_port_ = 22;
