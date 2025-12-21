@@ -5,6 +5,7 @@
 #include <array>
 #include <functional>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 class MenuState
@@ -82,6 +83,15 @@ public:
     void RequestExit() { should_exit_ = true; }
     void SetOnChangeCallback(SettingChangedCallback cb) { on_change_callback_ = std::move(cb); }
     // void SetVisibilityChangeCallback(ChangeVisibilityCallback cb) { on_change_visibility_callback_ = std::move(cb); }
+    void RequestGroundModeSkipSaveOnce();
+    bool ConsumeGroundModeSkipSaveOnce();
+    void RequestGroundModeForceSaveOnce();
+    bool ConsumeGroundModeForceSaveOnce();
+    void ForceGroundModeNotifyOnce();
+    bool ExperimentalGroundPersisted() const { return experimental_ground_persisted_; }
+    void SetExperimentalGroundPersisted(bool value) { experimental_ground_persisted_ = value; }
+    bool IsGroundModePersisted(const std::string &label) const;
+    void SetGroundModePersisted(const std::string &label, bool persisted);
 
 private:
     static std::vector<int> BuildRange(int start, int end);
@@ -110,4 +120,9 @@ private:
     bool menu_visible_ = false;
     bool recording_ = false;
     bool should_exit_ = false;
+    bool ground_mode_skip_save_once_ = false;
+    bool ground_mode_force_save_once_ = false;
+    bool force_ground_mode_notify_once_ = false;
+    bool experimental_ground_persisted_ = false;
+    std::unordered_set<std::string> persisted_ground_modes_;
 };

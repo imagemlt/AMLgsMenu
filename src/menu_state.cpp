@@ -65,11 +65,13 @@ void MenuState::SetSkyModeIndex(int index)
 
 void MenuState::SetGroundModeIndex(int index)
 {
-    if (ground_mode_index_ == index)
+    const bool force_notify = force_ground_mode_notify_once_;
+    if (!force_notify && ground_mode_index_ == index)
     {
         return;
     }
     ground_mode_index_ = index;
+    force_ground_mode_notify_once_ = false;
     NotifyChange(SettingType::GroundMode);
 }
 
@@ -132,4 +134,50 @@ void MenuState::ToggleRecording()
     }
     recording_ = new_value;
     NotifyChange(SettingType::Recording);
+}
+
+void MenuState::RequestGroundModeSkipSaveOnce()
+{
+    ground_mode_skip_save_once_ = true;
+}
+
+bool MenuState::ConsumeGroundModeSkipSaveOnce()
+{
+    bool flag = ground_mode_skip_save_once_;
+    ground_mode_skip_save_once_ = false;
+    return flag;
+}
+
+void MenuState::RequestGroundModeForceSaveOnce()
+{
+    ground_mode_force_save_once_ = true;
+}
+
+bool MenuState::ConsumeGroundModeForceSaveOnce()
+{
+    bool flag = ground_mode_force_save_once_;
+    ground_mode_force_save_once_ = false;
+    return flag;
+}
+
+void MenuState::ForceGroundModeNotifyOnce()
+{
+    force_ground_mode_notify_once_ = true;
+}
+
+bool MenuState::IsGroundModePersisted(const std::string &label) const
+{
+    return persisted_ground_modes_.count(label) > 0;
+}
+
+void MenuState::SetGroundModePersisted(const std::string &label, bool persisted)
+{
+    if (persisted)
+    {
+        persisted_ground_modes_.insert(label);
+    }
+    else
+    {
+        persisted_ground_modes_.erase(label);
+    }
 }

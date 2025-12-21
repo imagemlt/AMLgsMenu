@@ -73,6 +73,11 @@ private:
     bool focus_open_to_boot_ = false;
     bool focus_boot_to_confirm_ = false;
     bool focus_boot_to_open_ = false;
+    bool focus_boot_to_recording_ = false;
     int kodi_popup_focus_index_ = 0;
     bool kodi_popup_focus_dirty_ = false;
+    int pending_high_refresh_index_ = -1;
+    std::string pending_high_refresh_label_;
+    bool high_refresh_popup_pending_ = false;
+    bool high_refresh_persist_popup_pending_ = false;
 };

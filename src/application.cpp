@@ -299,9 +299,22 @@ bool Application::Initialize(const std::string &font_path, bool use_mock,
         case MenuState::SettingType::GroundMode: {
             // update ground_res and clean legacy typo
             config_kv_.erase("groud_res");
-            auto label = menu_state_->GroundModes()[menu_state_->GroundModeIndex()].label;
-            SaveConfigValue("ground_res", label);
-            ApplyGroundDisplayMode(label);
+            const auto &modes = menu_state_->GroundModes();
+            if (modes.empty())
+                break;
+            const auto &mode = modes[menu_state_->GroundModeIndex()];
+            bool skip_once = menu_state_->ConsumeGroundModeSkipSaveOnce();
+            bool force_save_once = menu_state_->ConsumeGroundModeForceSaveOnce();
+            const bool should_save = !skip_once || force_save_once;
+            if (should_save)
+            {
+                SaveConfigValue("ground_res", mode.label);
+                if (mode.refresh > 60)
+                {
+                    menu_state_->SetGroundModePersisted(mode.label, true);
+                }
+            }
+            ApplyGroundDisplayMode(mode.label);
             break;
         }
         case MenuState::SettingType::SkyMode:
@@ -1712,7 +1725,14 @@ void Application::LoadConfig()
             label.pop_back();
         int idx = FindGroundModeIndex(label);
         if (idx >= 0)
+        {
             menu_state_->SetGroundModeIndex(idx);
+            const auto &modes = menu_state_->GroundModes();
+            if (idx < static_cast<int>(modes.size()) && modes[idx].refresh > 60)
+            {
+                menu_state_->SetGroundModePersisted(modes[idx].label, true);
+            }
+        }
     }
     auto it_lang = config_kv_.find("lang");
     if (it_lang != config_kv_.end())

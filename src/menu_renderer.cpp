@@ -638,16 +638,24 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
                              ImGui::EndCombo();
                          } }, is_cn ? "\u5730\u9762\u7aef\u5206\u8fa8\u7387/\u5237\u65b0\u7387" : "Ground Res/Refresh", [&]
                      {
-                         if (!ground_modes.empty() && ImGui::BeginCombo("##ground_mode", FormatVideoModeLabel(ground_modes[state_.GroundModeIndex()]).c_str())) {
-                             for (int i = 0; i < static_cast<int>(ground_modes.size()); ++i) {
-                                 bool selected = (state_.GroundModeIndex() == i);
-                                 if (ImGui::Selectable(FormatVideoModeLabel(ground_modes[i]).c_str(), selected)) {
-                                     state_.SetGroundModeIndex(i);
-                                 }
-                                 if (selected) ImGui::SetItemDefaultFocus();
-                             }
-                             ImGui::EndCombo();
-                         } });
+        if (!ground_modes.empty() && ImGui::BeginCombo("##ground_mode", FormatVideoModeLabel(ground_modes[state_.GroundModeIndex()]).c_str())) {
+            for (int i = 0; i < static_cast<int>(ground_modes.size()); ++i) {
+                bool selected = (state_.GroundModeIndex() == i);
+                if (ImGui::Selectable(FormatVideoModeLabel(ground_modes[i]).c_str(), selected)) {
+                    const auto &mode = ground_modes[i];
+                    const bool requires_warning = (mode.refresh > 60) && !state_.IsGroundModePersisted(mode.label);
+                    if (requires_warning) {
+                        pending_high_refresh_index_ = i;
+                        pending_high_refresh_label_ = mode.label;
+                        high_refresh_popup_pending_ = true;
+                    } else {
+                        state_.SetGroundModeIndex(i);
+                    }
+                }
+                if (selected) ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+        } });
 
             const auto &bitrates = state_.Bitrates();
             const auto &powers = state_.PowerLevels();
@@ -714,12 +722,18 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
                          } });
 
             auto draw_dual_row = [&](const char *left_label, const std::function<void()> &left_cb,
-                                     const char *right_label, const std::function<void()> &right_cb)
+                                     const char *right_label, const std::function<void()> &right_cb,
+                                     bool *left_focus = nullptr, bool *right_focus = nullptr)
             {
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
                 ImGui::TextUnformatted(" ");
                 ImGui::TableSetColumnIndex(1);
+                if (left_focus && *left_focus)
+                {
+                    ImGui::SetKeyboardFocusHere();
+                    *left_focus = false;
+                }
                 if (left_cb)
                 {
                     if (ImGui::Button(left_label, ImVec2(-1, 0)))
@@ -734,6 +748,11 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
                 ImGui::TableSetColumnIndex(2);
                 ImGui::TextUnformatted(" ");
                 ImGui::TableSetColumnIndex(3);
+                if (right_focus && *right_focus)
+                {
+                    ImGui::SetKeyboardFocusHere();
+                    *right_focus = false;
+                }
                 if (right_cb)
                 {
                     if (ImGui::Button(right_label, ImVec2(-1, 0)))
@@ -761,7 +780,9 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
                     ? (is_cn ? "\u505c\u6b62\u5f55\u50cf" : "Stop Recording")
                     : (is_cn ? "\u5f00\u542f\u5f55\u50cf" : "Start Recording"),
                 [&]()
-                { state_.ToggleRecording(); });
+                { state_.ToggleRecording(); },
+                nullptr,
+                &focus_boot_to_recording_);
 
             ImGui::TableNextRow();
             ImGui::TableSetColumnIndex(0);
@@ -802,7 +823,7 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
                 }
                 else if (ImGui::IsKeyPressed(ImGuiKey_UpArrow, false))
                 {
-                    focus_boot_to_open_ = true;
+                    focus_boot_to_recording_ = true;
                 }
             }
 
@@ -832,6 +853,99 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
             ImGui::EndTable();
         }
         ImGui::PopStyleVar();
+
+        if (high_refresh_popup_pending_ && pending_high_refresh_index_ >= 0)
+        {
+            ImGui::OpenPopup("confirm_high_refresh");
+            high_refresh_popup_pending_ = false;
+        }
+        if (high_refresh_persist_popup_pending_)
+        {
+            ImGui::OpenPopup("confirm_high_refresh_persist");
+            high_refresh_persist_popup_pending_ = false;
+        }
+
+        ImGui::SetNextWindowSize(ImVec2(420.0f, 0), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + viewport->Size.x * 0.5f,
+                                       viewport->Pos.y + viewport->Size.y * 0.5f),
+                                ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+        if (ImGui::BeginPopupModal("confirm_high_refresh", nullptr,
+                                   ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar))
+        {
+            const char *msg = is_cn ? "\u8be5\u5206\u8fa8\u7387\u5237\u65b0\u7387\u8d85\u8fc760Hz\uff0c\u53ef\u80fd\u5bfc\u81f4\u9ed1\u5c4f\uff0c\u662f\u5426\u7ee7\u7eed\uff1f"
+                                    : "This refresh rate exceeds 60Hz and may cause a black screen. Continue?";
+            ImGui::TextWrapped("%s", msg);
+            ImGui::Spacing();
+            const float hr_button_width = 130.0f;
+            const float hr_spacing = ImGui::GetStyle().ItemSpacing.x;
+            const float hr_total_width = hr_button_width * 2.0f + hr_spacing;
+            const float hr_region_width = ImGui::GetContentRegionAvail().x;
+            const float hr_base_x = ImGui::GetCursorPosX();
+            if (hr_region_width > hr_total_width)
+            {
+                ImGui::SetCursorPosX(hr_base_x + (hr_region_width - hr_total_width) * 0.5f);
+            }
+            if (ImGui::Button(is_cn ? "\u53d6\u6d88" : "Cancel", ImVec2(hr_button_width, 0)))
+            {
+                pending_high_refresh_index_ = -1;
+                pending_high_refresh_label_.clear();
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button(is_cn ? "\u7ee7\u7eed" : "Continue", ImVec2(hr_button_width, 0)))
+            {
+                if (pending_high_refresh_index_ >= 0)
+                {
+                    state_.RequestGroundModeSkipSaveOnce();
+                    state_.SetGroundModeIndex(pending_high_refresh_index_);
+                    pending_high_refresh_index_ = -1;
+                }
+                high_refresh_persist_popup_pending_ = true;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+
+        ImGui::SetNextWindowSize(ImVec2(360.0f, 0), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + viewport->Size.x * 0.5f,
+                                       viewport->Pos.y + viewport->Size.y * 0.5f),
+                                ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+        if (ImGui::BeginPopupModal("confirm_high_refresh_persist", nullptr,
+                                   ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar))
+        {
+            const char *msg = is_cn ? "\u662f\u5426\u4ee5\u540e\u9ed8\u8ba4\u4f7f\u7528\u8be5\u9ad8\u5237\u65b9\u6848\uff1f"
+                                    : "Use this high refresh rate by default in the future?";
+            ImGui::TextWrapped("%s", msg);
+            ImGui::Spacing();
+            const float persist_button_width = 120.0f;
+            const float persist_spacing = ImGui::GetStyle().ItemSpacing.x;
+            const float persist_total = persist_button_width * 2.0f + persist_spacing;
+            const float persist_region = ImGui::GetContentRegionAvail().x;
+            const float persist_base = ImGui::GetCursorPosX();
+            if (persist_region > persist_total)
+            {
+                ImGui::SetCursorPosX(persist_base + (persist_region - persist_total) * 0.5f);
+            }
+            if (ImGui::Button(is_cn ? "\u5426" : "No", ImVec2(persist_button_width, 0)))
+            {
+                pending_high_refresh_label_.clear();
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button(is_cn ? "\u662f" : "Yes", ImVec2(persist_button_width, 0)))
+            {
+                if (!pending_high_refresh_label_.empty())
+                {
+                    state_.RequestGroundModeForceSaveOnce();
+                    state_.ForceGroundModeNotifyOnce();
+                    state_.SetGroundModeIndex(state_.GroundModeIndex());
+                    state_.SetGroundModePersisted(pending_high_refresh_label_, true);
+                    pending_high_refresh_label_.clear();
+                }
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
 
         if (kodi_popup_requested)
         {
