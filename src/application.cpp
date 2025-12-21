@@ -205,9 +205,18 @@ bool Application::Initialize(const std::string &font_path, bool use_mock,
     auto ground_modes = LoadHdmiModes("/sys/class/amhdmitx/amhdmitx0/disp_cap");
     if (ground_modes.empty())
     {
+        std::cout << "[AMLgsMenu] failed to load ground HDMI modes, using sky modes as fallback" << std::endl;
         ground_modes = sky_modes;
     }
-
+    bool has_native_120 = std::any_of(ground_modes.begin(), ground_modes.end(),
+                                      [](const VideoMode &m)
+                                      { return m.refresh == 120; });
+    if (!has_native_120)
+    {
+        std::cout << "[AMLgsMenu] not found 120hz display mode" << std::endl;
+        ground_modes.push_back(VideoMode{"1080p120hz", 1920, 1080, 120});
+        ground_modes.push_back(VideoMode{"720p120hz", 1280, 720, 120});
+    }
     menu_state_ = std::make_unique<MenuState>(sky_modes, ground_modes);
     LoadConfig();
     RebuildTransport(menu_state_->GetFirmwareType());
