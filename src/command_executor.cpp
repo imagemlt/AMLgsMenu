@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <sys/resource.h>
+#include <chrono>
 
 CommandExecutor::~CommandExecutor()
 {
@@ -62,17 +63,35 @@ void CommandExecutor::ThreadFunc()
 #ifdef __linux__
     setpriority(PRIO_PROCESS, 0, 5);
 #endif
+    using namespace std::chrono;
+    auto next_report = steady_clock::now() + minutes(1);
     while (true)
     {
         CommandJob job;
+        bool have_job = false;
         {
             std::unique_lock<std::mutex> lock(mtx_);
-            cv_.wait(lock, [&]
-                     { return stop_ || !queue_.empty(); });
+            cv_.wait_until(lock, next_report, [&]
+                           { return stop_ || !queue_.empty(); });
+            auto now = steady_clock::now();
+            if (now >= next_report)
+            {
+                std::fprintf(stdout, "[CommandExecutor] queue depth: %zu\n", queue_.size());
+                std::fflush(stdout);
+                next_report = now + minutes(1);
+            }
             if (stop_ && queue_.empty())
                 break;
-            job = std::move(queue_.front());
-            queue_.pop();
+            if (!queue_.empty())
+            {
+                job = std::move(queue_.front());
+                queue_.pop();
+                have_job = true;
+            }
+        }
+        if (!have_job)
+        {
+            continue;
         }
         if (job.kind == CommandJob::Kind::Shell)
         {

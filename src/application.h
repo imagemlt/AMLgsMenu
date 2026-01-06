@@ -16,6 +16,7 @@
 #include <libudev.h>
 
 #include <chrono>
+#include <atomic>
 #include <unordered_map>
 #include <memory>
 #include <regex>
@@ -49,6 +50,7 @@ public:
     bool Initialize(const std::string &font_path = "", bool use_mock = false,
                     const std::string &terminal_font_path = "");
     void SetCommandCfgPath(const std::string &path) { command_cfg_path_ = path; }
+    void SetMavlinkPort(uint16_t port) { mavlink_port_ = port; }
     void Run();
     void Shutdown();
     void SaveConfig();
@@ -102,6 +104,7 @@ public:
 
 private:
     void LoadConfig();
+    bool EnsureWritableConfig();
     void SaveConfigValue(const std::string &key, const std::string &value);
     int FindChannelIndex(int channel_val) const;
     int FindPowerIndex(int power_val) const;
@@ -129,8 +132,11 @@ private:
     void RebuildTransport(MenuState::FirmwareType type);
     std::shared_ptr<CommandTransport> AcquireTransport() const;
     void RestartRemoteSync();
+    void MaybeLaunchRemoteSyncJob();
+    void EnsureCommandRunnerForRemoteSync();
     std::string command_cfg_path_ = "/flash/command.cfg";
     void UpdateCommandRunner(bool menu_visible);
+    uint16_t mavlink_port_ = 14452;
 
     FbContext fb_{};
     EGLDisplay egl_display_ = EGL_NO_DISPLAY;
@@ -170,8 +176,9 @@ private:
     mutable std::mutex transport_mutex_;
 
     std::unordered_map<std::string, std::string> config_kv_;
-    std::string config_path_ = "/flash/wfb.conf";
-    std::thread remote_sync_thread_;
+    std::string config_path_ = "/storage/digitalfpv/wfb.conf";
+    std::atomic<bool> remote_sync_request_flag_{false};
+    std::atomic<bool> remote_sync_inflight_{false};
     std::mutex remote_state_mutex_;
     RemoteStateSnapshot pending_remote_state_{};
     bool remote_sync_ready_ = false;

@@ -43,7 +43,7 @@ struct ParsedTelemetry {
 
 class MavlinkReceiver {
 public:
-    explicit MavlinkReceiver(uint16_t udp_port = 14450);
+    explicit MavlinkReceiver(uint16_t udp_port = 14452);
     ~MavlinkReceiver();
 
     void Start();

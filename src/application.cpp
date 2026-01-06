@@ -36,6 +36,13 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <thread>
+#include <filesystem>
+
+namespace
+{
+constexpr const char kDefaultStorageConfigPath[] = "/storage/digitalfpv/wfb.conf";
+constexpr const char kFlashConfigPath[] = "/flash/wfb.conf";
+}
 
 Application::Application() = default;
 Application::~Application() { Shutdown(); }
@@ -166,6 +173,8 @@ bool Application::Initialize(const std::string &font_path, bool use_mock,
     last_js_scan_ = std::chrono::steady_clock::now();
     command_templates_.LoadFromFile(command_cfg_path_);
     cmd_runner_ = std::make_unique<CommandExecutor>();
+    cmd_runner_->Start();
+    command_runner_active_ = true;
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -222,13 +231,17 @@ bool Application::Initialize(const std::string &font_path, bool use_mock,
         ground_modes.push_back(VideoMode{"720p120hz", 1280, 720, 120});
     }
     menu_state_ = std::make_unique<MenuState>(sky_modes, ground_modes);
+    if (!EnsureWritableConfig())
+    {
+        std::fprintf(stderr, "[AMLgsMenu] Warning: failed to prepare config file '%s'\n", config_path_.c_str());
+    }
     LoadConfig();
     RebuildTransport(menu_state_->GetFirmwareType());
     StartRemoteSync();
     ApplyLanguageToImGui(menu_state_->GetLanguage());
     if (!use_mock_)
     {
-        mav_receiver_ = std::make_unique<MavlinkReceiver>();
+        mav_receiver_ = std::make_unique<MavlinkReceiver>(mavlink_port_);
         mav_receiver_->Start();
     }
 
@@ -243,7 +256,6 @@ bool Application::Initialize(const std::string &font_path, bool use_mock,
                 auto snap = telemetry_worker_->Latest();
                 if (snap.ground_signal.valid)
                 {
-                    // got signal,refresh sky
                     if (last_data.ground_signal_a == 0.0f)
                     {
                         std::fprintf(stdout, "[AMLgsMenu] First ground signal received,refresh sky signal values\n");
@@ -459,19 +471,15 @@ void Application::Run()
 
 void Application::UpdateCommandRunner(bool menu_visible)
 {
+    (void)menu_visible;
     if (!cmd_runner_)
     {
         return;
     }
-    if (menu_visible && !command_runner_active_)
+    if (!command_runner_active_)
     {
         cmd_runner_->Start();
         command_runner_active_ = true;
-    }
-    else if (!menu_visible && command_runner_active_)
-    {
-        cmd_runner_->Stop();
-        command_runner_active_ = false;
     }
 }
 
@@ -501,10 +509,6 @@ void Application::RebuildTransport(MenuState::FirmwareType type)
 
 void Application::RestartRemoteSync()
 {
-    if (remote_sync_thread_.joinable())
-    {
-        remote_sync_thread_.join();
-    }
     StartRemoteSync();
 }
 
@@ -543,10 +547,6 @@ void Application::Shutdown()
     if (signal_monitor_)
     {
         signal_monitor_.reset();
-    }
-    if (remote_sync_thread_.joinable())
-    {
-        remote_sync_thread_.join();
     }
     {
         std::lock_guard<std::mutex> lock(transport_mutex_);
@@ -1106,10 +1106,6 @@ void Application::HandleLibinputEvent(struct libinput_event *event, bool &runnin
             {
                 menu_state_->ToggleMenuVisibility();
                 UpdateCommandRunner(menu_state_->MenuVisible());
-            }
-            if (key == KEY_ESC)
-            {
-                running = false;
             }
             if (terminal_visible && key == KEY_C && (io.KeyCtrl || io.KeySuper))
             {
@@ -1831,25 +1827,59 @@ void Application::LoadConfig()
         config_kv_[key] = val;
     }
 
+    bool channel_loaded = false;
     auto it_ch = config_kv_.find("channel");
     if (it_ch != config_kv_.end())
     {
         int ch = std::stoi(it_ch->second);
         int idx = FindChannelIndex(ch);
         if (idx >= 0)
+        {
             menu_state_->SetChannelIndex(idx);
+            channel_loaded = true;
+        }
     }
+    if (!channel_loaded)
+    {
+        int default_channel = 161;
+        int idx = FindChannelIndex(default_channel);
+        if (idx < 0 && !menu_state_->Channels().empty())
+            idx = FindChannelIndex(menu_state_->Channels()[0]);
+        if (idx >= 0 && !menu_state_->Channels().empty())
+        {
+            menu_state_->SetChannelIndex(idx);
+            config_kv_["channel"] = std::to_string(menu_state_->Channels()[idx]);
+        }
+    }
+
+    bool bandwidth_loaded = false;
     auto it_bw = config_kv_.find("bandwidth");
     if (it_bw != config_kv_.end())
     {
         int bw = std::stoi(it_bw->second);
         if (bw == 10)
+        {
             menu_state_->SetBandwidthIndex(0);
+            bandwidth_loaded = true;
+        }
         else if (bw == 20)
+        {
             menu_state_->SetBandwidthIndex(1);
+            bandwidth_loaded = true;
+        }
         else if (bw == 40)
+        {
             menu_state_->SetBandwidthIndex(2);
+            bandwidth_loaded = true;
+        }
     }
+    if (!bandwidth_loaded)
+    {
+        menu_state_->SetBandwidthIndex(1); // default 20MHz
+        config_kv_["bandwidth"] = "20";
+    }
+
+    bool power_loaded = false;
     auto it_power = config_kv_.find("driver_txpower_override");
     if (it_power != config_kv_.end())
     {
@@ -1859,8 +1889,24 @@ void Application::LoadConfig()
         {
             menu_state_->SetGroundPowerIndex(idx);
             menu_state_->SetSkyPowerIndex(idx);
+            power_loaded = true;
         }
     }
+    if (!power_loaded)
+    {
+        int default_power = 5;
+        int idx = FindPowerIndex(default_power);
+        if (idx < 0)
+            idx = 0;
+        if (idx >= 0 && !menu_state_->PowerLevels().empty())
+        {
+            menu_state_->SetGroundPowerIndex(idx);
+            menu_state_->SetSkyPowerIndex(idx);
+            config_kv_["driver_txpower_override"] = std::to_string(menu_state_->PowerLevels()[idx]);
+        }
+    }
+
+    bool ground_mode_loaded = false;
     // support both correct key and legacy typo
     auto it_res = config_kv_.find("ground_res");
     if (it_res == config_kv_.end())
@@ -1881,8 +1927,23 @@ void Application::LoadConfig()
             {
                 menu_state_->SetGroundModePersisted(modes[idx].label, true);
             }
+            ground_mode_loaded = true;
         }
     }
+    if (!ground_mode_loaded)
+    {
+        std::string fallback = "1080p60hz";
+        int idx = FindGroundModeIndex(fallback);
+        if (idx < 0)
+            idx = 0;
+        const auto &modes = menu_state_->GroundModes();
+        if (idx >= 0 && idx < static_cast<int>(modes.size()))
+        {
+            menu_state_->SetGroundModeIndex(idx);
+            config_kv_["ground_res"] = modes[idx].label;
+        }
+    }
+
     auto it_lang = config_kv_.find("lang");
     if (it_lang != config_kv_.end())
     {
@@ -1911,26 +1972,112 @@ void Application::LoadConfig()
     }
 }
 
+bool Application::EnsureWritableConfig()
+{
+    if (config_path_.empty())
+    {
+        return false;
+    }
+    namespace fs = std::filesystem;
+    fs::path target(config_path_);
+    std::error_code ec;
+    fs::path parent = target.parent_path();
+    if (!parent.empty() && !fs::exists(parent, ec))
+    {
+        if (!fs::create_directories(parent, ec))
+        {
+            std::fprintf(stderr, "[AMLgsMenu] Failed to create directory '%s': %s\n",
+                         parent.string().c_str(), ec.message().c_str());
+            return false;
+        }
+    }
+    if (fs::exists(target, ec))
+    {
+        return true;
+    }
+
+    if (config_path_ != kDefaultStorageConfigPath)
+    {
+        return true;
+    }
+
+    std::ifstream src(kFlashConfigPath, std::ios::binary);
+    if (!src.is_open())
+    {
+        std::fprintf(stderr, "[AMLgsMenu] Source config '%s' not found\n", kFlashConfigPath);
+        return false;
+    }
+    std::ofstream dst(config_path_, std::ios::binary | std::ios::trunc);
+    if (!dst.is_open())
+    {
+        std::fprintf(stderr, "[AMLgsMenu] Failed to open '%s' for writing\n", config_path_.c_str());
+        return false;
+    }
+    dst << src.rdbuf();
+    if (!dst.good())
+    {
+        std::fprintf(stderr, "[AMLgsMenu] Failed to copy config to '%s'\n", config_path_.c_str());
+        return false;
+    }
+    return true;
+}
+
 void Application::StartRemoteSync()
 {
-    if (remote_sync_thread_.joinable())
+    remote_sync_request_flag_.store(true, std::memory_order_release);
+    if (!command_runner_active_)
+    {
+        EnsureCommandRunnerForRemoteSync();
+    }
+    MaybeLaunchRemoteSyncJob();
+}
+
+void Application::MaybeLaunchRemoteSyncJob()
+{
+    if (!cmd_runner_ || !command_runner_active_)
+    {
+        return;
+    }
+    if (!remote_sync_request_flag_.load(std::memory_order_acquire))
+    {
+        return;
+    }
+    bool expected = false;
+    if (!remote_sync_inflight_.compare_exchange_strong(expected, true))
     {
         return;
     }
     auto transport = AcquireTransport();
     if (!transport)
     {
+        remote_sync_inflight_.store(false, std::memory_order_release);
         return;
     }
-    remote_sync_thread_ = std::thread([this, transport]()
-                                      {
+    remote_sync_request_flag_.store(false, std::memory_order_release);
+    cmd_runner_->EnqueueRemote([this, transport]()
+                               {
         RemoteStateSnapshot snapshot{};
         if (CollectRemoteState(snapshot, transport))
         {
             std::lock_guard<std::mutex> lock(remote_state_mutex_);
             pending_remote_state_ = snapshot;
-            remote_sync_ready_ = true;
-        } });
+        remote_sync_ready_ = true;
+        }
+        remote_sync_inflight_.store(false, std::memory_order_release);
+        MaybeLaunchRemoteSyncJob(); });
+}
+
+void Application::EnsureCommandRunnerForRemoteSync()
+{
+    if (!cmd_runner_)
+    {
+        return;
+    }
+    if (!command_runner_active_)
+    {
+        cmd_runner_->Start();
+        command_runner_active_ = true;
+    }
 }
 
 void Application::DrainRemoteState()
@@ -1950,6 +2097,7 @@ void Application::DrainRemoteState()
     {
         ApplyRemoteStateSnapshot(snapshot);
     }
+
 }
 
 bool Application::CollectRemoteState(RemoteStateSnapshot &snapshot,

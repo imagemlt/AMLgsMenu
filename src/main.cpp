@@ -4,6 +4,7 @@
 #include <string>
 #include <sys/resource.h>
 #include <cstdio>
+#include <cstdlib>
 
 static void PrintUsage(const char *prog) {
     std::printf(
@@ -11,8 +12,9 @@ static void PrintUsage(const char *prog) {
         "  -t, --font PATH       font file to load (default builtin)\n"
         "  -T, --terminal-font PATH terminal font file (defaults to UI font)\n"
         "  -m, --mock 0|1        enable mock telemetry\n"
+        "  -p, --mavlink-port N  set mavlink UDP port (default 14452)\n"
         "  -c, --command-cfg PATH command templates file (default /flash/command.cfg)\n"
-        "  -f, --config PATH     wfb.conf path (default /flash/wfb.conf)\n"
+        "  -f, --config PATH     wfb.conf path (default /storage/digitalfpv/wfb.conf)\n"
         "  -h, --help            this message\n",
         prog);
 }
@@ -23,10 +25,12 @@ int main(int argc, char **argv) {
     bool use_mock = false;
     std::string cmd_cfg;
     std::string cfg_path;
+    uint16_t mavlink_port = 14452;
     const option long_opts[] = {
         {"font", required_argument, nullptr, 't'},
         {"terminal-font", required_argument, nullptr, 'T'},
         {"mock", required_argument, nullptr, 'm'},
+        {"mavlink-port", required_argument, nullptr, 'p'},
         {"command-cfg", required_argument, nullptr, 'c'},
         {"config", required_argument, nullptr, 'f'},
         {"help", no_argument, nullptr, 'h'},
@@ -34,7 +38,7 @@ int main(int argc, char **argv) {
     };
 
     int opt;
-    while ((opt = getopt_long(argc, argv, "t:T:m:c:f:h", long_opts, nullptr)) != -1) {
+    while ((opt = getopt_long(argc, argv, "t:T:m:p:c:f:h", long_opts, nullptr)) != -1) {
         switch (opt) {
         case 't':
             font_path = optarg;
@@ -45,6 +49,16 @@ int main(int argc, char **argv) {
         case 'm':
             use_mock = (std::atoi(optarg) != 0);
             break;
+        case 'p': {
+            char *end = nullptr;
+            long val = std::strtol(optarg, &end, 10);
+            if (!optarg[0] || (end && *end != '\0') || val <= 0 || val > 65535) {
+                std::fprintf(stderr, "[AMLgsMenu] Invalid mavlink port: %s\n", optarg);
+                return 1;
+            }
+            mavlink_port = static_cast<uint16_t>(val);
+            break;
+        }
         case 'c':
             cmd_cfg = optarg;
             break;
@@ -68,6 +82,7 @@ int main(int argc, char **argv) {
     if (!cmd_cfg.empty()) {
         app.SetCommandCfgPath(cmd_cfg);
     }
+    app.SetMavlinkPort(mavlink_port);
     if (!cfg_path.empty()) {
         app.SetConfigPath(cfg_path);
     }

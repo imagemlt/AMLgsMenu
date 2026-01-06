@@ -72,15 +72,15 @@ std::string CommandTemplates::ReplaceVars(std::string templ,
 
 void CommandTemplates::InitDefaults() {
     defaults_["remote"]["channel"] =
-        "sed -i 's/channel=.*$/channel=${CHANNEL}/' /etc/wfb.conf && iwconfig wlan0 channel ${CHANNEL}";
+        "([ -f /etc/wfb.conf ] && sh -c 'tmp=/tmp/wfb_conf.$$.tmp; cp /etc/wfb.conf \"$tmp\" && sed -i \"s/^channel=.*/channel=$1/\" \"$tmp\" && cat \"$tmp\" > /etc/wfb.conf && rm -f \"$tmp\"' sh \"${CHANNEL}\" || wifibroadcast cli -s .wireless.channel \"${CHANNEL}\") && iwconfig wlan0 channel ${CHANNEL}";
     defaults_["remote"]["bandwidth"] =
-        "sed -i 's/bandwidth=.*$/bandwidth=${BANDWIDTH}/' /etc/wfb.conf";
+        "([ -f /etc/wfb.conf ] && sh -c 'tmp=/tmp/wfb_conf.$$.tmp; cp /etc/wfb.conf \"$tmp\" && sed -i \"s/^bandwidth=.*/bandwidth=$1/\" \"$tmp\" && cat \"$tmp\" > /etc/wfb.conf && rm -f \"$tmp\"' sh \"${BANDWIDTH}\" || wifibroadcast cli -s .wireless.width ${BANDWIDTH} )";
     defaults_["remote"]["sky_mode"] =
         "cli -s .video0.size ${WIDTH}x${HEIGHT} && cli -s .video0.fps ${FPS} && killall -1 majestic";
     defaults_["remote"]["bitrate"] =
         "cli -s .video0.bitrate ${BITRATE_KBPS} && curl -s 'http://localhost/api/v1/set?video0.bitrate=${BITRATE_KBPS}'";
     defaults_["remote"]["sky_power"] =
-        "sed -i 's/driver_txpower_override=.*$/driver_txpower_override=${POWER}/' /etc/wfb.conf && iw dev wlan0 set txpower fixed ${TXPOWER}";
+        "([ -f /etc/wfb.conf ] && sh -c 'tmp=/tmp/wfb_conf.$$.tmp; cp /etc/wfb.conf \"$tmp\" && sed -i \"s/^driver_txpower_override=.*/driver_txpower_override=$1/\" \"$tmp\" && cat \"$tmp\" > /etc/wfb.conf && rm -f \"$tmp\"' sh \"${POWER}\" || wifibroadcast cli -s .wireless.txpower ${POWER} ) && iw dev wlan0 set txpower fixed ${TXPOWER}";
     defaults_["remote_query"]["channel"] =
         "awk -F= '/^channel=/{print $2; exit}' /etc/wfb.conf";
     defaults_["remote_query"]["bandwidth"] =
