@@ -9,9 +9,17 @@ MenuState::MenuState(std::vector<VideoMode> sky_modes, std::vector<VideoMode> gr
                  149, 153, 157, 161, 165, 169, 173, 177}),
       bitrates_(BuildRange(1, 50)),
       power_levels_(BuildRange(1, 60)),
+      mcs_levels_(BuildRange(0, 12)),
       sky_modes_(std::move(sky_modes)),
       ground_modes_(std::move(ground_modes))
 {
+    if (!mcs_levels_.empty())
+    {
+        if (sky_mcs_index_ < 0 || sky_mcs_index_ >= static_cast<int>(mcs_levels_.size()))
+        {
+            sky_mcs_index_ = 0;
+        }
+    }
 }
 
 std::vector<int> MenuState::BuildRange(int start, int end)
@@ -83,6 +91,16 @@ void MenuState::SetBitrateIndex(int index)
     }
     bitrate_index_ = index;
     NotifyChange(SettingType::Bitrate);
+}
+
+void MenuState::SetSkyMcsIndex(int index)
+{
+    if (sky_mcs_index_ == index)
+    {
+        return;
+    }
+    sky_mcs_index_ = index;
+    NotifyChange(SettingType::SkyMcs);
 }
 
 void MenuState::SetSkyPowerIndex(int index)

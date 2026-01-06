@@ -6,7 +6,8 @@
 - OSD（MAVLink 或 mock）：地平线、信号强度（dBm）、飞行模式、GPS+离家距离、视频码率/分辨率/刷新率、电池、天空/地面温度。地面天线信号直接从 `wifibroadcast` 服务的 `RX_ANT` 日志中解析，保持与实际天线状态一致，服务缺失时不会崩溃而是沿用上一次值。未收到 MAVLink（且非 mock）时左上角小字 “WAITING”，其余元素不显示飞行模式。
 - 信道：2.4G 1–13，5G {32,36,40,44,48,52,56,60,64,68,96,100,104,108,112,116,120,124,128,132,136,140,144,149,153,157,161,165,169,173,177}；频宽 10/20/40 MHz。
 - 天空分辨率：1280x720@120，1920x1080@90，1920x1080@60，2240x1260@60，3200x1800@30，3840x2160@20。地面分辨率自动读取 `/sys/class/amhdmitx/amhdmitx0/modes`，无则回退默认。
-- 命令行：`-t 字体.ttf`（推荐粗体全字库）用于 UI，`-T 字体.ttf` 可选指定终端字体，`-m 1` 强制 mock；默认 MAVLink 监听 0.0.0.0:14450 UDP。
+- 命令行：`-t 字体.ttf`（推荐粗体全字库）用于 UI，`-T 字体.ttf` 可选指定终端字体，`-m 1` 强制 mock；默认 MAVLink 监听 0.0.0.0:14452 UDP。
+- 命令执行线程常驻后台，会每分钟输出一次 `[CommandExecutor] queue depth: N`，用于观察命令堆积情况（数值过大通常表示远端操作阻塞）。
 - UDP 配置下发（单向）到 127.0.0.1:14650/14651：信道、频宽、天空分辨率/帧率（重启 majestic）、码率（Mbps→kbps）、天空功率（p*50 mBm）。本地 monitor 网卡同步信道/功率，带 HT20/HT40+ 后缀，无 monitor 时跳过。
 - 图标默认路径 `/storage/digitalfpv/icons/`（建议透明 48x48 PNG）。文字白色黑描边；菜单不透明，OSD 纯透明背景。
 - 固件传输模式可选：**CC 固件（UDP）** 与 **官方固件（SSH）**。两者共用 `command.cfg`，菜单切换后自动切换到底层传输；SSH 连接 `root@10.5.0.10`（密码 `12345`）。
@@ -19,7 +20,7 @@
 ./AMLgsMenu -T 字体.ttf         # 指定终端字体（默认使用 UI 字体）
 ./AMLgsMenu -m 1                # 强制 mock
 ./AMLgsMenu -c /flash/command.cfg # 指定 command.cfg 路径（默认 /flash/command.cfg）
-./AMLgsMenu -f /flash/wfb.conf    # 指定 wfb.conf 路径（默认 /flash/wfb.conf）
+./AMLgsMenu -f /storage/digitalfpv/wfb.conf    # 指定 wfb.conf 路径（默认 /storage/digitalfpv/wfb.conf，如缺失会自动从 /flash/wfb.conf 同步）
 ./AMLgsMenu -h | --help           # 查看帮助
 ```
 右键或手柄 X 键切换菜单；支持鼠标/键盘/手柄导航。
@@ -43,12 +44,12 @@ cmake --build build-ng
 ```
 
 ## 固件模式
-- “固件模式”下拉可切换 **CC 固件（UDP）** 与 **官方固件（SSH）**。UDP 模式使用本地 127.0.0.1:14650/14651；官方模式会对 `root@10.5.0.10`（密码 `12345`）发起短连接 SSH，并在同一个 `command.cfg` 模板上执行命令/查询。
-- 选择会写入 `/flash/wfb.conf` 的 `firmware=cc|official`，也可以手动编辑该键值。切换后程序会重新拉取一次天空端状态，使菜单显示同步。
+- “固件模式”下拉可切换 **CC 固件（UDP）** 与 **官方固件（SSH）**。UDP 模式使用本地 127.0.0.1:14650/14651；官方模式会对 `root@10.5.0.10`（默认密码 `12345`，可在 `/storage/digitalfpv/wfb.conf` 中设置 `ssh_pass=<新密码>` 替换）发起短连接 SSH，并在同一个 `command.cfg` 模板上执行命令/查询。
+- 选择会写入 `/storage/digitalfpv/wfb.conf`（缺失时会从 `/flash/wfb.conf` 自动复制）里的 `firmware=cc|official`，也可以手动编辑该键值。切换后程序会重新拉取一次天空端状态，使菜单显示同步。
 - 编译/部署前请确保系统包含 libssh。
 
 ## MAVLink
-- 默认绑定 0.0.0.0:14450；收到首帧打印一次日志；未知飞行模式不显示。
+- 默认绑定 0.0.0.0:14452；收到首帧打印一次日志；未知飞行模式不显示。
 - Mock 模式跳过接收器，始终有数据。
 
 ## 配置下发

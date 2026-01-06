@@ -64,6 +64,8 @@ private:
         int bandwidth = 0;
         bool has_power = false;
         int power = 0;
+        bool has_mcs = false;
+        int mcs = 0;
         bool has_bitrate = false;
         int bitrate_kbps = 0;
         bool has_sky_mode = false;
@@ -108,6 +110,7 @@ private:
     void SaveConfigValue(const std::string &key, const std::string &value);
     int FindChannelIndex(int channel_val) const;
     int FindPowerIndex(int power_val) const;
+    int FindMcsIndex(int mcs_val) const;
     int FindGroundModeIndex(const std::string &label) const;
     int FindSkyModeIndex(int width, int height, int refresh) const;
     int FindBitrateIndex(int bitrate_mbps) const;
@@ -124,6 +127,7 @@ private:
     void ApplySkyMode();
     void ApplyGroundDisplayMode(const std::string &label);
     void ApplyBitrate();
+    void ApplySkyMcs();
     void ApplySkyPower();
     void ApplyGroundPower();
     void ApplyLocalMonitorChannel(int channel);

@@ -8,7 +8,8 @@ Transparent OSD and configuration UI for AML-based fbdev + GLES targets. Uses EG
 - OSD mock (or MAVLink) data: horizon, signals (dBm), flight mode, GPS + home distance, video bitrate/resolution/refresh, battery, sky/ground temps. Ground antenna readings now parse the latest `RX_ANT` entries from the `wifibroadcast` journal so the OSD mirrors realtime signal variation; if the service is unavailable the existing display simply keeps the last known value. When no MAVLink is received (and not in mock), only a small “WAITING” tag shows in the top-left.
 - Channel list aligned to Digi: 2.4G 1–13 + 5G {32,36,40,44,48,52,56,60,64,68,96,100,104,108,112,116,120,124,128,132,136,140,144,149,153,157,161,165,169,173,177}. Bandwidth 10/20/40 MHz.
 - Sky modes aligned to Digi: 1280x720@120, 1920x1080@90, 1920x1080@60, 2240x1260@60, 3200x1800@30, 3840x2160@20. Ground modes auto-read from `/sys/class/amhdmitx/amhdmitx0/modes` with fallback.
-- Command-line: `-t <font.ttf>` custom UI font (recommend bold CJK font), `-T <font.ttf>` custom terminal font, `-m 1` forces mock data; default binds MAVLink UDP 0.0.0.0:14450.
+- Command-line: `-t <font.ttf>` custom UI font (recommend bold CJK font), `-T <font.ttf>` custom terminal font, `-m 1` forces mock data; default binds MAVLink UDP 0.0.0.0:14452.
+- The command executor runs continuously in the background. Every minute it prints `[CommandExecutor] queue depth: N`, which helps monitoring command backlog (large values usually mean remote operations stuck).
 - UDP config push (fire-and-forget) to 127.0.0.1:14650/14651: channel, bandwidth, sky mode (size/fps, restart majestic), bitrate (Mbps→kbps), sky power (p*50 mBm). Ground power/channel also apply to local monitor interfaces via `iw` (with HT20/HT40+ suffix).
 - Icons default path `/storage/digitalfpv/icons/` (PNG, e.g., 48x48). Text is white with black outline, menu opaque; OSD fully transparent behind.
 - Firmware transport toggle: CC edition (UDP loopback) or Official (SSH to `root@10.5.0.10`, password `12345`). Both use the same `command.cfg` templates; switch inside the menu and the app transparently swaps transports.
@@ -38,18 +39,18 @@ cmake --build build-ng
 ./AMLgsMenu -T /path/to/font.ttf      # optional terminal font
 ./AMLgsMenu -m 1                      # force mock
 ./AMLgsMenu -c /flash/command.cfg     # override command template config (default /flash/command.cfg)
-./AMLgsMenu -f /flash/wfb.conf        # override wfb.conf path (default /flash/wfb.conf)
+./AMLgsMenu -f /storage/digitalfpv/wfb.conf        # override wfb.conf path (default /storage/digitalfpv/wfb.conf)
 ./AMLgsMenu -h | --help               # show usage summary
 ```
 Right-click or gamepad X toggles the menu; controller navigation enabled.
 
 ## Firmware modes
-- Menu entry “Firmware” lets you choose **CC edition (UDP)** or **Official (SSH)**. UDP mode targets the classic CC firmware and keeps talking to 127.0.0.1:14650/14651. Official mode opens a short-lived SSH session to `root@10.5.0.10` (password `12345`) for every command/query. The `command.cfg` templates stay the same—the app simply swaps transports.
-- The selection is persisted inside `/flash/wfb.conf` under `firmware=cc|official`. Edit the file manually or use the menu; switching triggers a one-shot remote state sync so the dropdowns reflect the other side.
+- Menu entry “Firmware” lets you choose **CC edition (UDP)** or **Official (SSH)**. UDP mode targets the classic CC firmware and keeps talking to 127.0.0.1:14650/14651. Official mode opens a short-lived SSH session to `root@10.5.0.10` (default password `12345`) for every command/query；set `ssh_pass=<newpass>` in `/storage/digitalfpv/wfb.conf` if the target password changes. The `command.cfg` templates stay the same—the app simply swaps transports.
+- The selection is persisted inside `/storage/digitalfpv/wfb.conf` under `firmware=cc|official` (the file is auto-copied from `/flash/wfb.conf` if missing). Edit the file manually or use the menu; switching triggers a one-shot remote state sync so the dropdowns reflect the other side.
 - SSH support relies on libssh; make sure the dependency is available in your CoreELEC toolchain/sysroot.
 
 ## MAVLink
-- Receiver binds 0.0.0.0:14450 UDP; first message logs once. Flight mode hidden if unknown. Mock mode bypasses receiver.
+- Receiver binds 0.0.0.0:14452 UDP; first message logs once. Flight mode hidden if unknown. Mock mode bypasses receiver.
 
 ## Icons & fonts
 - Default icon lookup: `/storage/digitalfpv/icons/`. Use ~48x48 transparent PNGs.

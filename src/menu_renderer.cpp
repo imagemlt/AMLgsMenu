@@ -529,9 +529,9 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
 
 void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
 {
-    const ImVec2 menu_size = ImVec2(viewport->Size.x * 0.5f, viewport->Size.y * 0.5f);
+    const ImVec2 menu_size = ImVec2(viewport->Size.x * 0.5f, viewport->Size.y * 0.55f);
     const ImVec2 menu_pos = ImVec2(viewport->Pos.x + viewport->Size.x * 0.25f,
-                                   viewport->Pos.y + viewport->Size.y * 0.25f);
+                                   viewport->Pos.y + viewport->Size.y * 0.225f);
     const bool is_cn = state_.GetLanguage() == MenuState::Language::CN;
     bool kodi_popup_requested = false;
 
@@ -659,6 +659,7 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
 
             const auto &bitrates = state_.Bitrates();
             const auto &powers = state_.PowerLevels();
+            const auto &mcs_levels = state_.McsLevels();
             row_pair(is_cn ? "\u7801\u7387(Mbps)" : "Bitrate (Mbps)", [&]
                      {
                          if (ImGui::BeginCombo("##bitrate", std::to_string(bitrates[state_.BitrateIndex()]).c_str())) {
@@ -668,9 +669,9 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
                                      state_.SetBitrateIndex(i);
                                  }
                                  if (selected) ImGui::SetItemDefaultFocus();
-                             }
-                             ImGui::EndCombo();
-                         } }, is_cn ? "\u5929\u7a7a\u7aef\u53d1\u5c04\u529f\u7387" : "Air TX Power", [&]
+                         }
+                            ImGui::EndCombo();
+                        } }, is_cn ? "\u5929\u7a7a\u7aef\u53d1\u5c04\u529f\u7387" : "Air TX Power", [&]
                      {
                          if (ImGui::BeginCombo("##sky_power", std::to_string(powers[state_.SkyPowerIndex()]).c_str())) {
                              for (int i = 0; i < static_cast<int>(powers.size()); ++i) {
@@ -682,6 +683,30 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
                              }
                              ImGui::EndCombo();
                          } });
+
+            row_pair(is_cn ? "\u5929\u7a7a\u7aefMCS" : "Air MCS", [&]
+                     {
+                         if (mcs_levels.empty())
+                         {
+                             ImGui::TextUnformatted("--");
+                             return;
+                         }
+                         const int current_mcs = mcs_levels[state_.SkyMcsIndex()];
+                         if (ImGui::BeginCombo("##sky_mcs", std::to_string(current_mcs).c_str()))
+                         {
+                             for (int i = 0; i < static_cast<int>(mcs_levels.size()); ++i)
+                             {
+                                 bool selected = (state_.SkyMcsIndex() == i);
+                                 if (ImGui::Selectable(std::to_string(mcs_levels[i]).c_str(), selected))
+                                 {
+                                     state_.SetSkyMcsIndex(i);
+                                 }
+                                 if (selected)
+                                     ImGui::SetItemDefaultFocus();
+                             }
+                             ImGui::EndCombo();
+                         }
+                     }, " ", [] {});
 
             row_pair(is_cn ? "\u5730\u9762\u7aef\u53d1\u5c04\u529f\u7387" : "Ground TX Power", [&]
                      {

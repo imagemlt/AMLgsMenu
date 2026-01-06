@@ -20,6 +20,7 @@ public:
         SkyMode,
         GroundMode,
         Bitrate,
+        SkyMcs,
         SkyPower,
         GroundPower,
         Recording,
@@ -48,6 +49,7 @@ public:
     const std::vector<VideoMode> &GroundModes() const { return ground_modes_; }
     const std::vector<int> &Bitrates() const { return bitrates_; }
     const std::vector<int> &PowerLevels() const { return power_levels_; }
+    const std::vector<int> &McsLevels() const { return mcs_levels_; }
     bool MenuVisible() const { return menu_visible_; }
 
     int ChannelIndex() const { return channel_index_; }
@@ -56,6 +58,7 @@ public:
     int GroundModeIndex() const { return ground_mode_index_; }
     int BitrateIndex() const { return bitrate_index_; }
     int SkyPowerIndex() const { return sky_power_index_; }
+    int SkyMcsIndex() const { return sky_mcs_index_; }
     int GroundPowerIndex() const { return ground_power_index_; }
     Language GetLanguage() const { return language_; }
     FirmwareType GetFirmwareType() const { return firmware_type_; }
@@ -67,6 +70,7 @@ public:
     void SetSkyModeIndex(int index);
     void SetGroundModeIndex(int index);
     void SetBitrateIndex(int index);
+    void SetSkyMcsIndex(int index);
     void SetSkyPowerIndex(int index);
     void SetGroundPowerIndex(int index);
     void SetLanguage(Language lang);
@@ -100,6 +104,7 @@ private:
     std::vector<int> channels_;
     std::vector<int> bitrates_;
     std::vector<int> power_levels_;
+    std::vector<int> mcs_levels_;
     std::vector<VideoMode> sky_modes_;
     std::vector<VideoMode> ground_modes_;
     std::array<const char *, 3> bandwidths_{{"10 MHz", "20 MHz", "40 MHz"}};
@@ -113,6 +118,7 @@ private:
     int ground_mode_index_ = 0;
     int bitrate_index_ = 0;
     int sky_power_index_ = 0;
+    int sky_mcs_index_ = 2;
     int ground_power_index_ = 0;
     Language language_ = Language::CN;
     // shared_ptr<Application> application_;

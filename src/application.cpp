@@ -344,6 +344,9 @@ bool Application::Initialize(const std::string &font_path, bool use_mock,
         case MenuState::SettingType::Bitrate:
             ApplyBitrate();
             break;
+        case MenuState::SettingType::SkyMcs:
+            ApplySkyMcs();
+            break;
         case MenuState::SettingType::SkyPower:
             ApplySkyPower();
             break;
@@ -694,6 +697,32 @@ void Application::ApplyBitrate()
                 if (!transport->Send(cmd, false))
                 {
                     std::fprintf(stderr, "[AMLgsMenu] Failed to send bitrate command\n");
+                } });
+        }
+    }
+}
+
+void Application::ApplySkyMcs()
+{
+    const auto &mcs_levels = menu_state_->McsLevels();
+    if (mcs_levels.empty())
+        return;
+    int idx = menu_state_->SkyMcsIndex();
+    if (idx < 0 || idx >= static_cast<int>(mcs_levels.size()))
+        return;
+    int mcs = mcs_levels[idx];
+    if (auto transport = AcquireTransport())
+    {
+        std::unordered_map<std::string, std::string> vars{
+            {"MCS", std::to_string(mcs)}};
+        auto cmd = command_templates_.Render("remote", "sky_mcs", vars);
+        if (!cmd.empty() && cmd_runner_)
+        {
+            cmd_runner_->EnqueueRemote([transport, cmd]()
+                                       {
+                if (!transport->Send(cmd, false))
+                {
+                    std::fprintf(stderr, "[AMLgsMenu] Failed to send sky MCS command\n");
                 } });
         }
     }
@@ -1906,6 +1935,19 @@ void Application::LoadConfig()
         }
     }
 
+    const auto &mcs_levels = menu_state_->McsLevels();
+    if (!mcs_levels.empty())
+    {
+        int default_mcs = 2;
+        int idx = FindMcsIndex(default_mcs);
+        if (idx < 0)
+            idx = 0;
+        if (idx >= 0 && idx < static_cast<int>(mcs_levels.size()))
+        {
+            menu_state_->SetSkyMcsIndex(idx);
+        }
+    }
+
     bool ground_mode_loaded = false;
     // support both correct key and legacy typo
     auto it_res = config_kv_.find("ground_res");
@@ -2157,6 +2199,16 @@ bool Application::CollectRemoteState(RemoteStateSnapshot &snapshot,
             any = true;
         }
     }
+    if (QueryRemoteValue("sky_mcs", value, transport))
+    {
+        int mcs = 0;
+        if (try_parse_int(value, mcs))
+        {
+            snapshot.has_mcs = true;
+            snapshot.mcs = mcs;
+            any = true;
+        }
+    }
     if (QueryRemoteValue("bitrate", value, transport))
     {
         int kbps = 0;
@@ -2228,6 +2280,15 @@ void Application::ApplyRemoteStateSnapshot(const RemoteStateSnapshot &snapshot)
             menu_state_->SetGroundPowerIndex(idx);
             config_kv_["driver_txpower_override"] = std::to_string(snapshot.power);
             std::fprintf(stdout, "[AMLgsMenu] Remote TX power synced: %d\n", snapshot.power);
+        }
+    }
+    if (snapshot.has_mcs)
+    {
+        int idx = FindMcsIndex(snapshot.mcs);
+        if (idx >= 0)
+        {
+            menu_state_->SetSkyMcsIndex(idx);
+            std::fprintf(stdout, "[AMLgsMenu] Remote MCS synced: %d\n", snapshot.mcs);
         }
     }
     if (snapshot.has_bitrate)
@@ -2333,6 +2394,17 @@ int Application::FindPowerIndex(int power_val) const
     for (size_t i = 0; i < pwr.size(); ++i)
     {
         if (pwr[i] == power_val)
+            return static_cast<int>(i);
+    }
+    return -1;
+}
+
+int Application::FindMcsIndex(int mcs_val) const
+{
+    const auto &mcs = menu_state_->McsLevels();
+    for (size_t i = 0; i < mcs.size(); ++i)
+    {
+        if (mcs[i] == mcs_val)
             return static_cast<int>(i);
     }
     return -1;

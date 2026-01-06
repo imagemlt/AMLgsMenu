@@ -81,12 +81,16 @@ void CommandTemplates::InitDefaults() {
         "cli -s .video0.bitrate ${BITRATE_KBPS} && curl -s 'http://localhost/api/v1/set?video0.bitrate=${BITRATE_KBPS}'";
     defaults_["remote"]["sky_power"] =
         "([ -f /etc/wfb.conf ] && sh -c 'tmp=/tmp/wfb_conf.$$.tmp; cp /etc/wfb.conf \"$tmp\" && sed -i \"s/^driver_txpower_override=.*/driver_txpower_override=$1/\" \"$tmp\" && cat \"$tmp\" > /etc/wfb.conf && rm -f \"$tmp\"' sh \"${POWER}\" || wifibroadcast cli -s .wireless.txpower ${POWER} ) && iw dev wlan0 set txpower fixed ${TXPOWER}";
+    defaults_["remote"]["sky_mcs"] =
+        "([ -f /etc/wfb.conf ] && sh -c 'tmp=/tmp/wfb_conf.$$.tmp; cp /etc/wfb.conf \"$tmp\" && sed -i \"s/^mcs_index=.*/mcs_index=$1/\" \"$tmp\" && cat \"$tmp\" > /etc/wfb.conf && rm -f \"$tmp\"' sh \"${MCS}\" || wifibroadcast cli -s .broadcast.mcs_index ${MCS} )";
     defaults_["remote_query"]["channel"] =
         "awk -F= '/^channel=/{print $2; exit}' /etc/wfb.conf";
     defaults_["remote_query"]["bandwidth"] =
         "awk -F= '/^bandwidth=/{print $2; exit}' /etc/wfb.conf";
     defaults_["remote_query"]["sky_power"] =
         "awk -F= '/^driver_txpower_override=/{print $2; exit}' /etc/wfb.conf";
+    defaults_["remote_query"]["sky_mcs"] =
+        "awk -F= '/^mcs_index=/{print $2; exit}' /etc/wfb.conf";
     defaults_["remote_query"]["bitrate"] =
         "cli -g .video0.bitrate";
     defaults_["remote_query"]["sky_size"] =

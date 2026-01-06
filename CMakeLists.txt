@@ -15,6 +15,7 @@ add_executable(AMLgsMenu
     src/mavlink_receiver.cpp
     src/menu_renderer.cpp
     src/signal_monitor.cpp
+    src/splash_data.cpp
     src/telemetry_worker.cpp
     src/menu_state.cpp
     src/video_mode.cpp
