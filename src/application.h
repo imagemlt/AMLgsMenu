@@ -171,7 +171,7 @@ private:
     const std::string ssh_host_ = "10.5.0.10";
     const uint16_t ssh_port_ = 22;
     const std::string ssh_user_ = "root";
-    const std::string ssh_password_ = "12345";
+    std::string ssh_password_ = "12345";
     std::shared_ptr<CommandTransport> transport_;
     mutable std::mutex transport_mutex_;
 

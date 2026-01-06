@@ -1955,6 +1955,11 @@ void Application::LoadConfig()
         else if (v == "cn")
             menu_state_->SetLanguage(MenuState::Language::CN);
     }
+    auto it_sshpass = config_kv_.find("ssh_pass");
+    if (it_sshpass != config_kv_.end())
+    {
+        ssh_password_ = it_sshpass->second;
+    }
     auto it_fw = config_kv_.find("firmware");
     if (it_fw != config_kv_.end())
     {
