@@ -267,6 +267,7 @@ bool Application::Initialize(const std::string &font_path, bool use_mock,
                 if (snap.packet_rate.valid && snap.packet_rate.primary_mbps > 0.0f)
                 {
                     data.bitrate_mbps = snap.packet_rate.primary_mbps;
+                    RequestIdrFrame();
                 }
                 if (snap.has_ground_temp)
                 {
@@ -725,6 +726,25 @@ void Application::ApplySkyMcs()
                     std::fprintf(stderr, "[AMLgsMenu] Failed to send sky MCS command\n");
                 } });
         }
+    }
+}
+
+void Application::RequestIdrFrame()
+{
+    if (idr_requested_)
+        return;
+    auto cmd = command_templates_.Render("remote", "request_idr", {});
+    if (cmd.empty() || !cmd_runner_)
+        return;
+    if (auto transport = AcquireTransport())
+    {
+        idr_requested_ = true;
+        cmd_runner_->EnqueueRemote([transport, cmd]()
+                                   {
+            if (!transport->Send(cmd, false))
+            {
+                std::fprintf(stderr, "[AMLgsMenu] Failed to request IDR frame\n");
+            } });
     }
 }
 

@@ -138,6 +138,7 @@ private:
     void RestartRemoteSync();
     void MaybeLaunchRemoteSyncJob();
     void EnsureCommandRunnerForRemoteSync();
+    void RequestIdrFrame();
     std::string command_cfg_path_ = "/flash/command.cfg";
     void UpdateCommandRunner(bool menu_visible);
     uint16_t mavlink_port_ = 14452;
@@ -163,6 +164,7 @@ private:
     std::vector<JoystickDevice> joysticks_;
     bool use_mock_ = false;
     bool command_runner_active_ = false;
+    bool idr_requested_ = false;
     std::unique_ptr<Terminal> terminal_;
     ImFont *ui_font_ = nullptr;
     ImFont *terminal_font_ = nullptr;
