@@ -23,6 +23,10 @@ public:
         SkyMcs,
         SkyPower,
         GroundPower,
+        SoundEnable,
+        SoundVolume,
+        BadFramePolicy,
+        AdaptiveLink,
         Recording,
         Language,
         Firmware,
@@ -50,6 +54,7 @@ public:
     const std::vector<int> &Bitrates() const { return bitrates_; }
     const std::vector<int> &PowerLevels() const { return power_levels_; }
     const std::vector<int> &McsLevels() const { return mcs_levels_; }
+    const std::vector<int> &VolumeLevels() const { return volume_levels_; }
     bool MenuVisible() const { return menu_visible_; }
 
     int ChannelIndex() const { return channel_index_; }
@@ -60,9 +65,13 @@ public:
     int SkyPowerIndex() const { return sky_power_index_; }
     int SkyMcsIndex() const { return sky_mcs_index_; }
     int GroundPowerIndex() const { return ground_power_index_; }
+    int SoundVolumeIndex() const { return sound_volume_index_; }
+    int BadFrameIndex() const { return bad_frame_index_; }
+    bool AdaptiveLinkEnabled() const { return adaptive_link_enabled_; }
     Language GetLanguage() const { return language_; }
     FirmwareType GetFirmwareType() const { return firmware_type_; }
     bool Recording() const { return recording_; }
+    bool SoundEnabled() const { return sound_enabled_; }
     bool ShouldExit() const { return should_exit_; }
 
     void SetChannelIndex(int index);
@@ -73,6 +82,10 @@ public:
     void SetSkyMcsIndex(int index);
     void SetSkyPowerIndex(int index);
     void SetGroundPowerIndex(int index);
+    void SetSoundEnabled(bool enabled);
+    void SetSoundVolumeIndex(int index);
+    void SetBadFrameIndex(int index);
+    void SetAdaptiveLinkEnabled(bool enabled);
     void SetLanguage(Language lang);
     void SetFirmwareType(FirmwareType type);
     void ToggleMenuVisibility()
@@ -105,6 +118,7 @@ private:
     std::vector<int> bitrates_;
     std::vector<int> power_levels_;
     std::vector<int> mcs_levels_;
+    std::vector<int> volume_levels_;
     std::vector<VideoMode> sky_modes_;
     std::vector<VideoMode> ground_modes_;
     std::array<const char *, 3> bandwidths_{{"10 MHz", "20 MHz", "40 MHz"}};
@@ -120,11 +134,15 @@ private:
     int sky_power_index_ = 0;
     int sky_mcs_index_ = 2;
     int ground_power_index_ = 0;
+    int sound_volume_index_ = 9;
+    int bad_frame_index_ = 1;
+    bool adaptive_link_enabled_ = false;
     Language language_ = Language::CN;
     // shared_ptr<Application> application_;
     FirmwareType firmware_type_ = FirmwareType::CCEdition;
     bool menu_visible_ = false;
     bool recording_ = false;
+    bool sound_enabled_ = false;
     bool should_exit_ = false;
     bool ground_mode_skip_save_once_ = false;
     bool ground_mode_force_save_once_ = false;

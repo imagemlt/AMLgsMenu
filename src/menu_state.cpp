@@ -10,6 +10,7 @@ MenuState::MenuState(std::vector<VideoMode> sky_modes, std::vector<VideoMode> gr
       bitrates_(BuildRange(1, 50)),
       power_levels_(BuildRange(1, 60)),
       mcs_levels_(BuildRange(0, 12)),
+      volume_levels_({10, 20, 30, 40, 50, 60, 70, 80, 90, 100}),
       sky_modes_(std::move(sky_modes)),
       ground_modes_(std::move(ground_modes))
 {
@@ -18,6 +19,13 @@ MenuState::MenuState(std::vector<VideoMode> sky_modes, std::vector<VideoMode> gr
         if (sky_mcs_index_ < 0 || sky_mcs_index_ >= static_cast<int>(mcs_levels_.size()))
         {
             sky_mcs_index_ = 0;
+        }
+    }
+    if (!volume_levels_.empty())
+    {
+        if (sound_volume_index_ < 0 || sound_volume_index_ >= static_cast<int>(volume_levels_.size()))
+        {
+            sound_volume_index_ = static_cast<int>(volume_levels_.size()) - 1;
         }
     }
 }
@@ -121,6 +129,46 @@ void MenuState::SetGroundPowerIndex(int index)
     }
     ground_power_index_ = index;
     NotifyChange(SettingType::GroundPower);
+}
+
+void MenuState::SetSoundEnabled(bool enabled)
+{
+    if (sound_enabled_ == enabled)
+    {
+        return;
+    }
+    sound_enabled_ = enabled;
+    NotifyChange(SettingType::SoundEnable);
+}
+
+void MenuState::SetSoundVolumeIndex(int index)
+{
+    if (sound_volume_index_ == index)
+    {
+        return;
+    }
+    sound_volume_index_ = index;
+    NotifyChange(SettingType::SoundVolume);
+}
+
+void MenuState::SetBadFrameIndex(int index)
+{
+    if (bad_frame_index_ == index)
+    {
+        return;
+    }
+    bad_frame_index_ = index;
+    NotifyChange(SettingType::BadFramePolicy);
+}
+
+void MenuState::SetAdaptiveLinkEnabled(bool enabled)
+{
+    if (adaptive_link_enabled_ == enabled)
+    {
+        return;
+    }
+    adaptive_link_enabled_ = enabled;
+    NotifyChange(SettingType::AdaptiveLink);
 }
 
 void MenuState::SetLanguage(Language lang)

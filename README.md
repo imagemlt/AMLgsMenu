@@ -13,6 +13,7 @@ Transparent OSD and configuration UI for AML-based fbdev + GLES targets. Uses EG
 - UDP config push (fire-and-forget) to 127.0.0.1:14650/14651: channel, bandwidth, sky mode (size/fps, restart majestic), bitrate (Mbps→kbps), sky power (p*50 mBm). Ground power/channel also apply to local monitor interfaces via `iw` (with HT20/HT40+ suffix).
 - Icons default path `/storage/digitalfpv/icons/` (PNG, e.g., 48x48). Text is white with black outline, menu opaque; OSD fully transparent behind.
 - Firmware transport toggle: CC edition (UDP loopback) or Official (SSH to `root@10.5.0.10`, password `12345`). Both use the same `command.cfg` templates; switch inside the menu and the app transparently swaps transports.
+- Sound controls: toggle “Sound” to write `sound=0|1` in `wfb.conf` and send `sound=1|0` via UDP to 127.0.0.1:5612; adjust the volume dropdown (10%–100%) to send `pactl set-sink-volume @DEFAULT_SINK@ XX%`.
 - Custom text overlays for arbitrary commands (see the icons/fonts section for format).
 
 ## Build
@@ -64,7 +65,7 @@ Right-click or gamepad X toggles the menu; controller navigation enabled.
   Coordinates are in screen pixels from the top-left origin.
 
 ## Input tips
-- Mouse: right-click toggles the menu, left-click/wheel behave like a desktop app.
+- Mouse: right-click toggles the menu; left-clicking also wakes it when hidden, and left-click/wheel behave like a desktop app.
 - Keyboard: Alt toggles the menu; arrows move focus; Enter confirms combos/buttons; Ctrl+C quits the app. When the terminal is open, keyboard events are captured by the terminal (menu navigation falls back to mouse).
 - Gamepad (Xbox layout): X toggles the menu; D-Pad moves; A confirms selection.
 - For the embedded terminal, best experience is with both keyboard and mouse attached; avoid relying on the controller while the terminal window is active.

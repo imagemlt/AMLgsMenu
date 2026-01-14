@@ -8,6 +8,7 @@
 #include <chrono>
 #include <string>
 #include <vector>
+#include <array>
 
 class MenuRenderer
 {
@@ -69,11 +70,11 @@ private:
     ImTextureID icon_temp_ground_{};
     std::function<void()> toggle_terminal_;
     std::function<bool()> terminal_visible_;
-    bool focus_confirm_to_open_ = false;
-    bool focus_open_to_boot_ = false;
-    bool focus_boot_to_confirm_ = false;
-    bool focus_boot_to_open_ = false;
-    bool focus_boot_to_recording_ = false;
+    int pending_focus_index_ = -1;
+    int last_focus_index_ = -1;
+    std::array<std::vector<int>, 2> last_focus_columns_{};
+    std::vector<int> last_focus_index_to_col_;
+    std::vector<int> last_focus_index_to_pos_;
     int kodi_popup_focus_index_ = 0;
     bool kodi_popup_focus_dirty_ = false;
     int pending_high_refresh_index_ = -1;

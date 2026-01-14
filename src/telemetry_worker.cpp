@@ -27,8 +27,8 @@ constexpr std::chrono::seconds kSignalInterval{2};
 constexpr std::chrono::seconds kTempInterval{1};
 constexpr std::chrono::seconds kFpsInterval{1};
 constexpr std::chrono::seconds kHidBatteryInterval{2};
-constexpr uint16_t kCemianVendorId = 0x2019;
-constexpr uint16_t kCemianProductId = 0x056D;
+constexpr uint16_t kCemianVendorId = 0x1209;
+constexpr uint16_t kCemianProductId = 0xC55D;
 constexpr size_t kCemianBatteryIndex = 6;
 constexpr size_t kCemianReportLength = 8;
 

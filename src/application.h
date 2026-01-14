@@ -130,9 +130,15 @@ private:
     void ApplySkyMcs();
     void ApplySkyPower();
     void ApplyGroundPower();
+    void ApplySoundEnabled();
+    void ApplySoundVolume();
+    void ApplyBadFramePolicy();
+    void ApplyAdaptiveLink();
     void ApplyLocalMonitorChannel(int channel);
     void ApplyLocalMonitorPower(int power_level);
+    bool SendUdpControlCommand(uint16_t port, const char *payload, const char *tag);
     bool SendRecordingCommand(bool enable);
+    bool SendSoundCommand(bool enable);
     void RebuildTransport(MenuState::FirmwareType type);
     std::shared_ptr<CommandTransport> AcquireTransport() const;
     void RestartRemoteSync();

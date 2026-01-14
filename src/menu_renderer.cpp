@@ -529,9 +529,9 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
 
 void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
 {
-    const ImVec2 menu_size = ImVec2(viewport->Size.x * 0.5f, viewport->Size.y * 0.55f);
-    const ImVec2 menu_pos = ImVec2(viewport->Pos.x + viewport->Size.x * 0.25f,
-                                   viewport->Pos.y + viewport->Size.y * 0.225f);
+    const ImVec2 menu_size = ImVec2(viewport->Size.x * 0.54f, viewport->Size.y * 0.60f);
+    const ImVec2 menu_pos = ImVec2(viewport->Pos.x + viewport->Size.x * 0.23f,
+                                   viewport->Pos.y + viewport->Size.y * 0.20f);
     const bool is_cn = state_.GetLanguage() == MenuState::Language::CN;
     bool kodi_popup_requested = false;
 
@@ -558,49 +558,96 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
 
     if (ImGui::Begin("GS Control Menu", nullptr, flags))
     {
+        const bool popup_open = ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId);
+        const bool nav_down = ImGui::IsKeyPressed(ImGuiKey_DownArrow, false);
+        const bool nav_up = ImGui::IsKeyPressed(ImGuiKey_UpArrow, false);
+        if (!popup_open && (nav_down || nav_up) && last_focus_index_ >= 0 &&
+            last_focus_index_ < static_cast<int>(last_focus_index_to_col_.size()))
+        {
+            const int col = last_focus_index_to_col_[last_focus_index_];
+            const int pos = last_focus_index_to_pos_[last_focus_index_];
+            const auto &col_list = last_focus_columns_[col];
+            const auto &other_list = last_focus_columns_[1 - col];
+            if (nav_down)
+            {
+                if (pos + 1 < static_cast<int>(col_list.size()))
+                {
+                    pending_focus_index_ = col_list[pos + 1];
+                }
+                else if (!other_list.empty())
+                {
+                    pending_focus_index_ = other_list.front();
+                }
+            }
+            else if (nav_up)
+            {
+                if (pos > 0)
+                {
+                    pending_focus_index_ = col_list[pos - 1];
+                }
+                else if (!other_list.empty())
+                {
+                    pending_focus_index_ = other_list.back();
+                }
+            }
+        }
+
+        int focus_index = 0;
+        int focused_index = -1;
+        std::array<std::vector<int>, 2> focus_columns;
+        std::vector<int> index_to_col;
+        std::vector<int> index_to_pos;
+        auto register_focus = [&](int col, const std::function<void()> &draw)
+        {
+            if (pending_focus_index_ == focus_index)
+            {
+                ImGui::SetKeyboardFocusHere();
+                pending_focus_index_ = -1;
+            }
+            draw();
+            if (ImGui::IsItemFocused())
+            {
+                focused_index = focus_index;
+            }
+            index_to_col.push_back(col);
+            index_to_pos.push_back(static_cast<int>(focus_columns[col].size()));
+            focus_columns[col].push_back(focus_index);
+            ++focus_index;
+        };
+
         ImGui::TextUnformatted(is_cn ? "\u65e0\u7ebf\u94fe\u8def\u914d\u7f6e" : "Wireless Link Settings");
         ImGui::Separator();
 
-        ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(8, 10)); // slightly taller rows
+        ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(12, 10)); // slightly taller rows
         if (ImGui::BeginTable("menu_table", 4, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoSavedSettings))
         {
-            ImGui::TableSetupColumn("L1", ImGuiTableColumnFlags_WidthStretch, 0.22f);
-            ImGui::TableSetupColumn("C1", ImGuiTableColumnFlags_WidthStretch, 0.28f);
-            ImGui::TableSetupColumn("L2", ImGuiTableColumnFlags_WidthStretch, 0.22f);
-            ImGui::TableSetupColumn("C2", ImGuiTableColumnFlags_WidthStretch, 0.28f);
+            ImGui::TableSetupColumn("L1", ImGuiTableColumnFlags_WidthStretch, 0.24f);
+            ImGui::TableSetupColumn("C1", ImGuiTableColumnFlags_WidthStretch, 0.24f);
+            ImGui::TableSetupColumn("L2", ImGuiTableColumnFlags_WidthStretch, 0.24f);
+            ImGui::TableSetupColumn("C2", ImGuiTableColumnFlags_WidthStretch, 0.24f);
 
-            auto row_pair = [](const char *l1, const std::function<void()> &c1,
-                               const char *l2, const std::function<void()> &c2)
+            auto row_pair = [&](const char *l1, const std::function<void()> &c1,
+                                const char *l2, const std::function<void()> &c2)
             {
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
                 ImGui::TextUnformatted(l1);
                 ImGui::TableSetColumnIndex(1);
+                ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x * 0.8f);
                 c1();
+                ImGui::PopItemWidth();
                 ImGui::TableSetColumnIndex(2);
                 ImGui::TextUnformatted(l2);
                 ImGui::TableSetColumnIndex(3);
+                ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x * 0.8f);
                 c2();
+                ImGui::PopItemWidth();
             };
-            auto right_aligned_button = [](const char *label, ImVec2 size) -> bool
-            {
-                if (size.x <= 0.0f)
-                {
-                    const ImVec2 text = ImGui::CalcTextSize(label);
-                    size.x = text.x + ImGui::GetStyle().FramePadding.x * 2.0f;
-                }
-                const float column_width = ImGui::GetColumnWidth();
-                const float cursor_x = ImGui::GetCursorPosX();
-                const float spacing = ImGui::GetStyle().ItemSpacing.x;
-                float new_x = cursor_x + std::max(0.0f, column_width - size.x - spacing);
-                ImGui::SetCursorPosX(new_x);
-                return ImGui::Button(label, size);
-            };
-
             const auto &channels = state_.Channels();
             const auto &bandwidths = state_.Bandwidths();
             row_pair(is_cn ? "\u4fe1\u9053" : "Channel", [&]
-                     {
+                     { register_focus(0, [&]
+                       {
                          if (ImGui::BeginCombo("##channel", std::to_string(channels[state_.ChannelIndex()]).c_str())) {
                              for (int i = 0; i < static_cast<int>(channels.size()); ++i) {
                                  bool selected = (state_.ChannelIndex() == i);
@@ -610,8 +657,9 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
                                  if (selected) ImGui::SetItemDefaultFocus();
                              }
                              ImGui::EndCombo();
-                         } }, is_cn ? "\u9891\u5bbd" : "Bandwidth", [&]
-                     {
+                         } }); }, is_cn ? "\u9891\u5bbd" : "Bandwidth", [&]
+                     { register_focus(1, [&]
+                       {
                          if (ImGui::BeginCombo("##bandwidth", bandwidths[state_.BandwidthIndex()])) {
                              for (int i = 0; i < static_cast<int>(bandwidths.size()); ++i) {
                                  bool selected = (state_.BandwidthIndex() == i);
@@ -621,12 +669,13 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
                                  if (selected) ImGui::SetItemDefaultFocus();
                              }
                              ImGui::EndCombo();
-                         } });
+                         } }); });
 
             const auto &sky_modes = state_.SkyModes();
             const auto &ground_modes = state_.GroundModes();
             row_pair(is_cn ? "\u5929\u7a7a\u7aef\u5206\u8fa8\u7387/\u5237\u65b0\u7387" : "Air Res/Refresh", [&]
-                     {
+                     { register_focus(0, [&]
+                       {
                          if (!sky_modes.empty() && ImGui::BeginCombo("##sky_mode", FormatVideoModeLabel(sky_modes[state_.SkyModeIndex()]).c_str())) {
                              for (int i = 0; i < static_cast<int>(sky_modes.size()); ++i) {
                                  bool selected = (state_.SkyModeIndex() == i);
@@ -636,8 +685,9 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
                                  if (selected) ImGui::SetItemDefaultFocus();
                              }
                              ImGui::EndCombo();
-                         } }, is_cn ? "\u5730\u9762\u7aef\u5206\u8fa8\u7387/\u5237\u65b0\u7387" : "Ground Res/Refresh", [&]
-                     {
+                         } }); }, is_cn ? "\u5730\u9762\u7aef\u5206\u8fa8\u7387/\u5237\u65b0\u7387" : "Ground Res/Refresh", [&]
+                     { register_focus(1, [&]
+                       {
         if (!ground_modes.empty() && ImGui::BeginCombo("##ground_mode", FormatVideoModeLabel(ground_modes[state_.GroundModeIndex()]).c_str())) {
             for (int i = 0; i < static_cast<int>(ground_modes.size()); ++i) {
                 bool selected = (state_.GroundModeIndex() == i);
@@ -655,13 +705,14 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
                 if (selected) ImGui::SetItemDefaultFocus();
             }
             ImGui::EndCombo();
-        } });
+        } }); });
 
             const auto &bitrates = state_.Bitrates();
             const auto &powers = state_.PowerLevels();
             const auto &mcs_levels = state_.McsLevels();
             row_pair(is_cn ? "\u7801\u7387(Mbps)" : "Bitrate (Mbps)", [&]
-                     {
+                     { register_focus(0, [&]
+                       {
                          if (ImGui::BeginCombo("##bitrate", std::to_string(bitrates[state_.BitrateIndex()]).c_str())) {
                              for (int i = 0; i < static_cast<int>(bitrates.size()); ++i) {
                                  bool selected = (state_.BitrateIndex() == i);
@@ -671,8 +722,9 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
                                  if (selected) ImGui::SetItemDefaultFocus();
                          }
                             ImGui::EndCombo();
-                        } }, is_cn ? "\u5929\u7a7a\u7aef\u53d1\u5c04\u529f\u7387" : "Air TX Power", [&]
-                     {
+                        } }); }, is_cn ? "\u5929\u7a7a\u7aef\u53d1\u5c04\u529f\u7387" : "Air TX Power", [&]
+                     { register_focus(1, [&]
+                       {
                          if (ImGui::BeginCombo("##sky_power", std::to_string(powers[state_.SkyPowerIndex()]).c_str())) {
                              for (int i = 0; i < static_cast<int>(powers.size()); ++i) {
                                  bool selected = (state_.SkyPowerIndex() == i);
@@ -682,7 +734,7 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
                                  if (selected) ImGui::SetItemDefaultFocus();
                              }
                              ImGui::EndCombo();
-                         } });
+                         } }); });
 
             row_pair(is_cn ? "\u5929\u7a7a\u7aefMCS" : "Air MCS", [&]
                      {
@@ -691,6 +743,8 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
                              ImGui::TextUnformatted("--");
                              return;
                          }
+                         register_focus(0, [&]
+                         {
                          const int current_mcs = mcs_levels[state_.SkyMcsIndex()];
                          if (ImGui::BeginCombo("##sky_mcs", std::to_string(current_mcs).c_str()))
                          {
@@ -705,11 +759,10 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
                                      ImGui::SetItemDefaultFocus();
                              }
                              ImGui::EndCombo();
-                         }
-                     }, " ", [] {});
-
-            row_pair(is_cn ? "\u5730\u9762\u7aef\u53d1\u5c04\u529f\u7387" : "Ground TX Power", [&]
-                     {
+                         } });
+                     }, is_cn ? "\u5730\u9762\u7aef\u53d1\u5c04\u529f\u7387" : "Ground TX Power", [&]
+                     { register_focus(1, [&]
+                       {
                          if (ImGui::BeginCombo("##ground_power", std::to_string(powers[state_.GroundPowerIndex()]).c_str())) {
                              for (int i = 0; i < static_cast<int>(powers.size()); ++i) {
                                  bool selected = (state_.GroundPowerIndex() == i);
@@ -719,10 +772,88 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
                                  if (selected) ImGui::SetItemDefaultFocus();
                              }
                              ImGui::EndCombo();
-                         } }, " ", [] {});
+                         } }); });
+
+            const auto &volume_levels = state_.VolumeLevels();
+            row_pair(is_cn ? "\u58f0\u97f3\u5f00\u5173" : "Sound", [&]
+                     { register_focus(0, [&]
+                       {
+                         bool enabled = state_.SoundEnabled();
+                         if (ImGui::Checkbox("##sound_enable", &enabled))
+                         {
+                             state_.SetSoundEnabled(enabled);
+                         } }); }, is_cn ? "\u97f3\u91cf" : "Volume", [&]
+                     {
+                         if (volume_levels.empty())
+                         {
+                             ImGui::TextUnformatted("--");
+                             return;
+                         }
+                         register_focus(1, [&]
+                         {
+                         int volume_index = state_.SoundVolumeIndex();
+                         if (volume_index < 0 || volume_index >= static_cast<int>(volume_levels.size()))
+                         {
+                             volume_index = std::max(0, std::min(static_cast<int>(volume_levels.size()) - 1, volume_index));
+                         }
+                         const std::string label = std::to_string(volume_levels[volume_index]) + "%";
+                         if (ImGui::BeginCombo("##sound_volume", label.c_str()))
+                         {
+                             for (int i = 0; i < static_cast<int>(volume_levels.size()); ++i)
+                             {
+                                 const std::string item_label = std::to_string(volume_levels[i]) + "%";
+                                 bool selected = (volume_index == i);
+                                 if (ImGui::Selectable(item_label.c_str(), selected))
+                                 {
+                                     state_.SetSoundVolumeIndex(i);
+                                 }
+                                 if (selected)
+                                     ImGui::SetItemDefaultFocus();
+                             }
+                             ImGui::EndCombo();
+                         } });
+                     });
+
+            row_pair(is_cn ? "\u81ea\u9002\u5e94\u94fe\u8def" : "Adaptive Link", [&]
+                     {
+                         register_focus(0, [&]
+                         {
+                             bool enabled = state_.AdaptiveLinkEnabled();
+                             if (ImGui::Checkbox("##adaptive_link", &enabled))
+                             {
+                                 state_.SetAdaptiveLinkEnabled(enabled);
+                             }
+                         });
+                     }, is_cn ? "\u574f\u5305\u7b56\u7565" : "Bad Frame Policy", [&]
+                     {
+                         register_focus(1, [&]
+                         {
+                             const char *label_cn[] = {"\u4e22\u5305", "\u5ffd\u7565"};
+                             const char *label_en[] = {"Drop", "Ignore"};
+                             const char *current = (state_.BadFrameIndex() == 0)
+                                                       ? (is_cn ? label_cn[0] : label_en[0])
+                                                       : (is_cn ? label_cn[1] : label_en[1]);
+                             if (ImGui::BeginCombo("##bad_frame", current))
+                             {
+                                 for (int i = 0; i < 2; ++i)
+                                 {
+                                     const char *label = is_cn ? label_cn[i] : label_en[i];
+                                     bool selected = (state_.BadFrameIndex() == i);
+                                     if (ImGui::Selectable(label, selected))
+                                     {
+                                         state_.SetBadFrameIndex(i);
+                                     }
+                                     if (selected)
+                                         ImGui::SetItemDefaultFocus();
+                                 }
+                                 ImGui::EndCombo();
+                             }
+                         });
+                     });
 
             row_pair(is_cn ? "\u56fa\u4ef6\u6a21\u5f0f" : "Firmware", [&]
-                     {
+                     { register_focus(0, [&]
+                       {
                          const bool is_cc = state_.GetFirmwareType() == MenuState::FirmwareType::CCEdition;
                          const bool is_official = state_.GetFirmwareType() == MenuState::FirmwareType::Official;
                          ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f, 4.0f));
@@ -733,8 +864,9 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
                          if (ImGui::RadioButton(is_cn ? "\u5b98\u65b9 (SSH)" : "Official (SSH)", is_official)) {
                              state_.SetFirmwareType(MenuState::FirmwareType::Official);
                          }
-                         ImGui::PopStyleVar(); }, is_cn ? "\u8bed\u8a00" : "Language", [&]
-                     {
+                         ImGui::PopStyleVar(); }); }, is_cn ? "\u8bed\u8a00" : "Language", [&]
+                     { register_focus(1, [&]
+                       {
                          const char *label = state_.GetLanguage() == MenuState::Language::CN ? "\u4e2d\u6587" : "English";
                          if (ImGui::BeginCombo("##lang", label)) {
                              if (ImGui::Selectable("\u4e2d\u6587", state_.GetLanguage() == MenuState::Language::CN)) {
@@ -744,138 +876,93 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
                                  state_.SetLanguage(MenuState::Language::EN);
                              }
                              ImGui::EndCombo();
-                         } });
+                         } }); });
 
-            auto draw_dual_row = [&](const char *left_label, const std::function<void()> &left_cb,
-                                     const char *right_label, const std::function<void()> &right_cb,
-                                     bool *left_focus = nullptr, bool *right_focus = nullptr)
-            {
-                ImGui::TableNextRow();
-                ImGui::TableSetColumnIndex(0);
-                ImGui::TextUnformatted(" ");
-                ImGui::TableSetColumnIndex(1);
-                if (left_focus && *left_focus)
-                {
-                    ImGui::SetKeyboardFocusHere();
-                    *left_focus = false;
-                }
-                if (left_cb)
-                {
-                    if (ImGui::Button(left_label, ImVec2(-1, 0)))
-                    {
-                        left_cb();
-                    }
-                }
-                else
-                {
-                    ImGui::Dummy(ImVec2(-1, 0));
-                }
-                ImGui::TableSetColumnIndex(2);
-                ImGui::TextUnformatted(" ");
-                ImGui::TableSetColumnIndex(3);
-                if (right_focus && *right_focus)
-                {
-                    ImGui::SetKeyboardFocusHere();
-                    *right_focus = false;
-                }
-                if (right_cb)
-                {
-                    if (ImGui::Button(right_label, ImVec2(-1, 0)))
-                    {
-                        right_cb();
-                    }
-                }
-                else
-                {
-                    ImGui::Dummy(ImVec2(-1, 0));
-                }
-            };
+            row_pair("",
+                     [&]
+                     {
+                         if (!toggle_terminal_)
+                         {
+                             ImGui::Dummy(ImVec2(-1, 0));
+                             return;
+                         }
+                         register_focus(0, [&]
+                         {
+                             const char *label = (terminal_visible_ && terminal_visible_())
+                                                     ? (is_cn ? "\u5173\u95ed\u7ec8\u7aef" : "Hide Terminal")
+                                                     : (is_cn ? "\u6253\u5f00\u7ec8\u7aef" : "Open Terminal");
+                             if (ImGui::Button(label, ImVec2(-1, 0)))
+                             {
+                                 toggle_terminal_();
+                             }
+                         });
+                     },
+                     "",
+                     [&]
+                     {
+                         register_focus(1, [&]
+                         {
+                             const char *label = state_.Recording()
+                                                     ? (is_cn ? "\u505c\u6b62\u5f55\u50cf" : "Stop Recording")
+                                                     : (is_cn ? "\u5f00\u542f\u5f55\u50cf" : "Start Recording");
+                             if (ImGui::Button(label, ImVec2(-1, 0)))
+                             {
+                                 state_.ToggleRecording();
+                             }
+                         });
+                     });
 
-            draw_dual_row(
-                toggle_terminal_
-                    ? ((terminal_visible_ && terminal_visible_())
-                           ? (is_cn ? "\u5173\u95ed\u7ec8\u7aef" : "Hide Terminal")
-                           : (is_cn ? "\u6253\u5f00\u7ec8\u7aef" : "Open Terminal"))
-                    : "",
-                toggle_terminal_
-                    ? [&, this]()
-                    { toggle_terminal_(); }
-                    : std::function<void()>{},
-                state_.Recording()
-                    ? (is_cn ? "\u505c\u6b62\u5f55\u50cf" : "Stop Recording")
-                    : (is_cn ? "\u5f00\u542f\u5f55\u50cf" : "Start Recording"),
-                [&]()
-                { state_.ToggleRecording(); },
-                nullptr,
-                &focus_boot_to_recording_);
+            row_pair("",
+                     [&]
+                     {
+                         register_focus(0, [&]
+                         {
+                             if (ImGui::Button(is_cn ? "\u6253\u5f00 KODI" : "Open KODI", ImVec2(-1, 0)))
+                             {
+                                 kodi_popup_requested = true;
+                             }
+                         });
+                     },
+                     "",
+                     [&]
+                     {
+                         register_focus(1, [&]
+                         {
+                             if (ImGui::Button(is_cn ? "\u542f\u52a8\u5230\u5b89\u5353" : "Boot to Android", ImVec2(-1, 0)))
+                             {
+                                 std::system("/sbin/rebootfromnand;reboot");
+                                 running_flag = false;
+                             }
+                         });
+                     });
 
-            ImGui::TableNextRow();
-            ImGui::TableSetColumnIndex(0);
-            ImGui::TextUnformatted(" ");
-            ImGui::TableSetColumnIndex(1);
-            if (focus_confirm_to_open_ || focus_boot_to_open_)
-            {
-                ImGui::SetKeyboardFocusHere();
-                focus_confirm_to_open_ = false;
-                focus_boot_to_open_ = false;
-            }
-            if (ImGui::Button(is_cn ? "\u6253\u5f00 KODI" : "Open KODI", ImVec2(-1, 0)))
-            {
-                kodi_popup_requested = true;
-            }
-            if (ImGui::IsItemFocused() && ImGui::IsKeyPressed(ImGuiKey_DownArrow, false))
-            {
-                focus_open_to_boot_ = true;
-            }
-            ImGui::TableSetColumnIndex(2);
-            ImGui::TextUnformatted(" ");
-            ImGui::TableSetColumnIndex(3);
-            if (focus_open_to_boot_)
-            {
-                ImGui::SetKeyboardFocusHere();
-                focus_open_to_boot_ = false;
-            }
-            if (ImGui::Button(is_cn ? "\u542f\u52a8\u5230\u5b89\u5353" : "Boot to Android", ImVec2(-1, 0)))
-            {
-                std::system("/sbin/rebootfromnand;reboot");
-                running_flag = false;
-            }
-            if (ImGui::IsItemFocused())
-            {
-                if (ImGui::IsKeyPressed(ImGuiKey_DownArrow, false))
-                {
-                    focus_boot_to_confirm_ = true;
-                }
-                else if (ImGui::IsKeyPressed(ImGuiKey_UpArrow, false))
-                {
-                    focus_boot_to_recording_ = true;
-                }
-            }
-
-            ImGui::TableNextRow();
-            ImGui::TableSetColumnIndex(0);
-            ImGui::TextUnformatted(" ");
-            ImGui::TableSetColumnIndex(1);
-            ImGui::Dummy(ImVec2(-1, 0));
-            ImGui::TableSetColumnIndex(2);
-            ImGui::TextUnformatted(" ");
-            ImGui::TableSetColumnIndex(3);
-            if (focus_boot_to_confirm_)
-            {
-                ImGui::SetKeyboardFocusHere();
-                focus_boot_to_confirm_ = false;
-            }
-            if (ImGui::Button(is_cn ? "\u786e\u8ba4" : "OK", ImVec2(-1, 0)))
-            {
-                state_.ToggleMenuVisibility();
-                // application_.SaveConfig();
-            }
-            if (ImGui::IsItemFocused() && ImGui::IsKeyPressed(ImGuiKey_DownArrow, false))
-            {
-                focus_confirm_to_open_ = true;
-            }
+            row_pair("",
+                     [&]
+                     {
+                         ImGui::Dummy(ImVec2(-1, 0));
+                     },
+                     "",
+                     [&]
+                     {
+                         register_focus(1, [&]
+                         {
+                             if (ImGui::Button(is_cn ? "\u786e\u8ba4" : "OK", ImVec2(-1, 0)))
+                             {
+                                 state_.ToggleMenuVisibility();
+                             }
+                         });
+                     });
 
             ImGui::EndTable();
+            // When adding/removing focusable widgets, keep the registration order
+            // aligned with the table layout for predictable Up/Down navigation.
+            last_focus_columns_ = focus_columns;
+            last_focus_index_to_col_ = index_to_col;
+            last_focus_index_to_pos_ = index_to_pos;
+            if (focused_index >= 0)
+            {
+                last_focus_index_ = focused_index;
+            }
         }
         ImGui::PopStyleVar();
 
@@ -1004,7 +1091,8 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
                 ImGui::SetCursorPosX(base_x + (region_width - total_width) * 0.5f);
             }
 
-            auto render_popup_button = [&](int index, const char *label, auto &&handler) {
+            auto render_popup_button = [&](int index, const char *label, auto &&handler)
+            {
                 if (index > 0)
                 {
                     ImGui::SameLine();
@@ -1020,19 +1108,19 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
                 }
             };
 
-            render_popup_button(0, is_cn ? "\u53d6\u6d88" : "Cancel", [&]() {
+            render_popup_button(0, is_cn ? "\u53d6\u6d88" : "Cancel", [&]()
+                                {
                 ImGui::CloseCurrentPopup();
                 kodi_popup_focus_index_ = 0;
-                kodi_popup_focus_dirty_ = true;
-            });
+                kodi_popup_focus_dirty_ = true; });
 
-            render_popup_button(1, is_cn ? "\u786e\u8ba4" : "Confirm", [&]() {
+            render_popup_button(1, is_cn ? "\u786e\u8ba4" : "Confirm", [&]()
+                                {
                 std::system("bash -lc 'systemctl stop amldigitalfpv || true; systemctl start kodi2'"); // restart kodi and exit
                 running_flag = false;
                 ImGui::CloseCurrentPopup();
                 kodi_popup_focus_index_ = 0;
-                kodi_popup_focus_dirty_ = true;
-            });
+                kodi_popup_focus_dirty_ = true; });
             ImGui::EndPopup();
         }
     }

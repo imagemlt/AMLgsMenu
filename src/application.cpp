@@ -351,6 +351,33 @@ bool Application::Initialize(const std::string &font_path, bool use_mock,
         case MenuState::SettingType::SkyPower:
             ApplySkyPower();
             break;
+        case MenuState::SettingType::SoundEnable:
+            SaveConfigValue("sound", menu_state_->SoundEnabled() ? "1" : "0");
+            ApplySoundEnabled();
+            break;
+        case MenuState::SettingType::SoundVolume: {
+            const auto &volumes = menu_state_->VolumeLevels();
+            if (!volumes.empty())
+            {
+                int idx = menu_state_->SoundVolumeIndex();
+                if (idx < 0 || idx >= static_cast<int>(volumes.size()))
+                    idx = std::max(0, std::min(static_cast<int>(volumes.size()) - 1, idx));
+                SaveConfigValue("sound_volume", std::to_string(volumes[idx]));
+                ApplySoundVolume();
+            }
+            break;
+        }
+        case MenuState::SettingType::BadFramePolicy: {
+            int value = (menu_state_->BadFrameIndex() == 0) ? 0 : 160;
+            SaveConfigValue("bad_frame", std::to_string(value));
+            ApplyBadFramePolicy();
+            break;
+        }
+        case MenuState::SettingType::AdaptiveLink: {
+            SaveConfigValue("alink", menu_state_->AdaptiveLinkEnabled() ? "1" : "0");
+            ApplyAdaptiveLink();
+            break;
+        }
         case MenuState::SettingType::Language: {
             auto lang = menu_state_->GetLanguage();
             SaveConfigValue("lang", lang == MenuState::Language::CN ? "cn" : "en");
@@ -782,6 +809,57 @@ void Application::ApplyGroundPower()
     ApplyLocalMonitorPower(p);
 }
 
+void Application::ApplySoundEnabled()
+{
+    bool enabled = menu_state_->SoundEnabled();
+    if (!SendSoundCommand(enabled))
+    {
+        std::fprintf(stderr, "[AMLgsMenu] Failed to send sound command (%s)\n",
+                     enabled ? "sound=1" : "sound=0");
+    }
+}
+
+void Application::ApplySoundVolume()
+{
+    const auto &volumes = menu_state_->VolumeLevels();
+    if (volumes.empty())
+        return;
+    int idx = menu_state_->SoundVolumeIndex();
+    if (idx < 0 || idx >= static_cast<int>(volumes.size()))
+        idx = static_cast<int>(volumes.size()) - 1;
+    int volume = volumes[idx];
+    std::string cmd = "pactl set-sink-volume @DEFAULT_SINK@ " + std::to_string(volume) + "% >/dev/null 2>&1";
+    std::system(cmd.c_str());
+}
+
+void Application::ApplyBadFramePolicy()
+{
+    int value = (menu_state_->BadFrameIndex() == 0) ? 0 : 160;
+    std::ofstream ofs("/sys/module/amvdec_h265/parameters/error_handle_policy");
+    if (!ofs.is_open())
+    {
+        std::fprintf(stderr, "[AMLgsMenu] Failed to open error_handle_policy\n");
+        return;
+    }
+    ofs << value << std::endl;
+    if (!ofs.good())
+    {
+        std::fprintf(stderr, "[AMLgsMenu] Failed to set error_handle_policy=%d\n", value);
+    }
+}
+
+void Application::ApplyAdaptiveLink()
+{
+    if (menu_state_->AdaptiveLinkEnabled())
+    {
+        std::system("systemctl enable alink && systemctl start alink");
+    }
+    else
+    {
+        std::system("systemctl disable alink");
+    }
+}
+
 void Application::ApplyLocalMonitorChannel(int channel)
 {
     if (channel <= 0)
@@ -819,22 +897,33 @@ void Application::ApplyLocalMonitorPower(int power_level)
 
 bool Application::SendRecordingCommand(bool enable)
 {
+    const char *payload = enable ? "record=1" : "record=0";
+    return SendUdpControlCommand(5612, payload, "record");
+}
+
+bool Application::SendSoundCommand(bool enable)
+{
+    const char *payload = enable ? "sound=1" : "sound=0";
+    return SendUdpControlCommand(5612, payload, "sound");
+}
+
+bool Application::SendUdpControlCommand(uint16_t port, const char *payload, const char *tag)
+{
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
     if (sock < 0)
     {
-        std::perror("[AMLgsMenu] socket(record)");
+        std::fprintf(stderr, "[AMLgsMenu] socket(%s) failed: %s\n", tag, std::strerror(errno));
         return false;
     }
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
-    addr.sin_port = htons(5612);
+    addr.sin_port = htons(port);
     addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-    const char *payload = enable ? "record=1" : "record=0";
     ssize_t sent = sendto(sock, payload, std::strlen(payload), 0,
                           reinterpret_cast<const sockaddr *>(&addr), sizeof(addr));
     if (sent < 0)
     {
-        std::perror("[AMLgsMenu] sendto(record)");
+        std::fprintf(stderr, "[AMLgsMenu] sendto(%s) failed: %s\n", tag, std::strerror(errno));
         close(sock);
         return false;
     }
@@ -1091,7 +1180,14 @@ void Application::HandleLibinputEvent(struct libinput_event *event, bool &runnin
         auto state = libinput_event_pointer_get_button_state(b);
         bool pressed = (state == LIBINPUT_BUTTON_STATE_PRESSED);
         if (button == BTN_LEFT)
+        {
             io.MouseDown[0] = pressed;
+            if (pressed && !menu_state_->MenuVisible())
+            {
+                menu_state_->ToggleMenuVisibility();
+                UpdateCommandRunner(true);
+            }
+        }
         if (button == BTN_RIGHT && pressed)
         {
             menu_state_->ToggleMenuVisibility();
@@ -1937,7 +2033,6 @@ void Application::LoadConfig()
         if (idx >= 0)
         {
             menu_state_->SetGroundPowerIndex(idx);
-            menu_state_->SetSkyPowerIndex(idx);
             power_loaded = true;
         }
     }
@@ -1950,7 +2045,6 @@ void Application::LoadConfig()
         if (idx >= 0 && !menu_state_->PowerLevels().empty())
         {
             menu_state_->SetGroundPowerIndex(idx);
-            menu_state_->SetSkyPowerIndex(idx);
             config_kv_["driver_txpower_override"] = std::to_string(menu_state_->PowerLevels()[idx]);
         }
     }
@@ -2036,6 +2130,92 @@ void Application::LoadConfig()
         {
             menu_state_->SetFirmwareType(MenuState::FirmwareType::CCEdition);
         }
+    }
+    auto it_sound = config_kv_.find("sound");
+    if (it_sound != config_kv_.end())
+    {
+        std::string v = it_sound->second;
+        for (auto &c : v)
+            c = static_cast<char>(tolower(c));
+        bool enabled = (v == "1" || v == "true" || v == "yes");
+        menu_state_->SetSoundEnabled(enabled);
+    }
+    else
+    {
+        config_kv_["sound"] = "0";
+        menu_state_->SetSoundEnabled(false);
+    }
+
+    auto it_alink = config_kv_.find("alink");
+    if (it_alink != config_kv_.end())
+    {
+        std::string v = it_alink->second;
+        for (auto &c : v)
+            c = static_cast<char>(tolower(c));
+        bool enabled = (v == "1" || v == "true" || v == "yes");
+        menu_state_->SetAdaptiveLinkEnabled(enabled);
+    }
+    else
+    {
+        config_kv_["alink"] = "0";
+        menu_state_->SetAdaptiveLinkEnabled(false);
+    }
+
+    const auto &volume_levels = menu_state_->VolumeLevels();
+    if (!volume_levels.empty())
+    {
+        int volume_value = volume_levels.back();
+        auto it_vol = config_kv_.find("sound_volume");
+        if (it_vol != config_kv_.end())
+        {
+            try
+            {
+                volume_value = std::stoi(it_vol->second);
+            }
+            catch (const std::exception &)
+            {
+                volume_value = volume_levels.back();
+            }
+        }
+        else
+        {
+            config_kv_["sound_volume"] = std::to_string(volume_levels.back());
+        }
+        int idx = 0;
+        for (int i = 0; i < static_cast<int>(volume_levels.size()); ++i)
+        {
+            if (volume_levels[i] == volume_value)
+            {
+                idx = i;
+                break;
+            }
+        }
+        if (idx < 0 || idx >= static_cast<int>(volume_levels.size()))
+        {
+            idx = static_cast<int>(volume_levels.size()) - 1;
+        }
+        menu_state_->SetSoundVolumeIndex(idx);
+        config_kv_["sound_volume"] = std::to_string(volume_levels[idx]);
+    }
+
+    auto it_bad = config_kv_.find("bad_frame");
+    if (it_bad != config_kv_.end())
+    {
+        int val = 160;
+        try
+        {
+            val = std::stoi(it_bad->second);
+        }
+        catch (const std::exception &)
+        {
+            val = 160;
+        }
+        menu_state_->SetBadFrameIndex(val == 0 ? 0 : 1);
+    }
+    else
+    {
+        config_kv_["bad_frame"] = "160";
+        menu_state_->SetBadFrameIndex(1);
     }
 }
 
@@ -2297,8 +2477,6 @@ void Application::ApplyRemoteStateSnapshot(const RemoteStateSnapshot &snapshot)
         if (idx >= 0)
         {
             menu_state_->SetSkyPowerIndex(idx);
-            menu_state_->SetGroundPowerIndex(idx);
-            config_kv_["driver_txpower_override"] = std::to_string(snapshot.power);
             std::fprintf(stdout, "[AMLgsMenu] Remote TX power synced: %d\n", snapshot.power);
         }
     }
