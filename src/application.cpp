@@ -751,7 +751,7 @@ void Application::ApplyBitrate()
                 current_index = 0;
             }
             int current_mcs = mcs_levels[current_index];
-            if (current_mcs < required_mcs)
+            if (current_mcs != required_mcs)
             {
                 int idx = FindMcsIndex(required_mcs);
                 if (idx < 0)
