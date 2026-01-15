@@ -552,7 +552,7 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
 
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 12.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 8.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 2.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
     ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(20, 24, 32, 238));
     ImGui::PushStyleColor(ImGuiCol_Border, IM_COL32(80, 200, 190, 255)); // teal border

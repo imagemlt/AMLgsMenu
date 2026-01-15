@@ -520,22 +520,69 @@ bool Terminal::setupWindow()
 {
 	if (isEmbedded)
 	{
+		ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 16.0f);
+		ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14.0f, 12.0f));
+		ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
+		ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(18, 20, 24, 220));
+		ImGui::PushStyleColor(ImGuiCol_Border, IM_COL32(0, 0, 0, 0));
+		ImGui::PushStyleColor(ImGuiCol_ResizeGrip, IM_COL32(130, 140, 155, 120));
+		ImGui::PushStyleColor(ImGuiCol_ResizeGripHovered, IM_COL32(160, 175, 195, 180));
+		ImGui::PushStyleColor(ImGuiCol_ResizeGripActive, IM_COL32(190, 205, 225, 220));
 		if (focus_requested)
 		{
 			ImGui::SetNextWindowFocus();
 		}
-		ImGui::SetNextWindowPos(embeddedWindowPos, ImGuiCond_Always);
-		ImGui::SetNextWindowSize(embeddedWindowSize, ImGuiCond_Always);
+		ImGui::SetNextWindowPos(embeddedWindowPos, ImGuiCond_FirstUseEver);
+		ImGui::SetNextWindowSize(embeddedWindowSize, ImGuiCond_FirstUseEver);
 
 		bool windowOpen = true;
 		bool windowCreated =
 			ImGui::Begin("Terminal", &windowOpen,
-			             ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings);
+			             ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings |
+			                 ImGuiWindowFlags_NoTitleBar);
 		if (windowCreated)
 		{
+			const float header_h = ImGui::GetFontSize() * 1.4f;
+			ImDrawList *dl = ImGui::GetWindowDrawList();
+			const ImVec2 wp = ImGui::GetWindowPos();
+			const ImVec2 ws = ImGui::GetWindowSize();
+			const ImU32 header_col = IM_COL32(28, 30, 36, 230);
+			const float dot_r = 6.5f;
+			bool close_requested = false;
+			const ImVec2 cursor_backup = ImGui::GetCursorPos();
+			dl->AddRectFilled(wp, ImVec2(wp.x + ws.x, wp.y + header_h), header_col, 16.0f,
+			                  ImDrawFlags_RoundCornersTop);
+			const float dot_y = wp.y + header_h * 0.5f;
+			ImGui::SetCursorScreenPos(ImVec2(wp.x + 12.0f, dot_y - dot_r));
+			if (ImGui::InvisibleButton("##term_close", ImVec2(dot_r * 2.0f, dot_r * 2.0f)))
+			{
+				close_requested = true;
+			}
+			const ImU32 red_dot = ImGui::IsItemHovered() ? IM_COL32(255, 120, 110, 255) : IM_COL32(242, 98, 88, 255);
+			dl->AddCircleFilled(ImVec2(wp.x + 12.0f + dot_r, dot_y), dot_r, red_dot);
+
+			ImGui::SetCursorScreenPos(ImVec2(wp.x + 30.0f, dot_y - dot_r));
+			ImGui::InvisibleButton("##term_min", ImVec2(dot_r * 2.0f, dot_r * 2.0f));
+			dl->AddCircleFilled(ImVec2(wp.x + 30.0f + dot_r, dot_y), dot_r, IM_COL32(245, 205, 66, 255));
+
+			ImGui::SetCursorScreenPos(ImVec2(wp.x + 48.0f, dot_y - dot_r));
+			ImGui::InvisibleButton("##term_max", ImVec2(dot_r * 2.0f, dot_r * 2.0f));
+			dl->AddCircleFilled(ImVec2(wp.x + 48.0f + dot_r, dot_y), dot_r, IM_COL32(92, 204, 120, 255));
+
+			ImGui::SetCursorPos(cursor_backup);
+			const char *title = "Terminal";
+			const ImVec2 text_size = ImGui::CalcTextSize(title);
+			dl->AddText(ImVec2(wp.x + (ws.x - text_size.x) * 0.5f, wp.y + (header_h - text_size.y) * 0.5f),
+			            IM_COL32(210, 220, 235, 255), title);
+			ImGui::Dummy(ImVec2(0.0f, header_h));
 			embeddedWindowPos = ImGui::GetWindowPos();
 			embeddedWindowSize = ImGui::GetWindowSize();
 			embeddedWindowCollapsed = ImGui::IsWindowCollapsed();
+			if (close_requested)
+			{
+				windowOpen = false;
+			}
 			if (!windowOpen)
 			{
 				isVisible = false;
@@ -544,6 +591,8 @@ bool Terminal::setupWindow()
 		{
 			embeddedWindowCollapsed = true;
 		}
+		ImGui::PopStyleColor(5);
+		ImGui::PopStyleVar(4);
 		return windowCreated;
 	} else
 	{
