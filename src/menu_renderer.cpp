@@ -248,10 +248,15 @@ void MenuRenderer::Render(bool &running_flag)
     DrawOsd(viewport, cached_telemetry_);
 
     ImGuiIO &io = ImGui::GetIO();
-    io.MouseDrawCursor = state_.MenuVisible();
-    if (state_.MenuVisible())
+    const bool menu_visible = state_.MenuVisible();
+    io.MouseDrawCursor = menu_visible;
+    if (menu_visible)
     {
         DrawMenu(viewport, running_flag);
+    }
+    else
+    {
+        menu_visible_last_ = false;
     }
 }
 
@@ -535,6 +540,12 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
     const bool is_cn = state_.GetLanguage() == MenuState::Language::CN;
     bool kodi_popup_requested = false;
 
+    if (!menu_visible_last_)
+    {
+        last_focus_index_ = -1;
+    }
+    menu_visible_last_ = true;
+
     ImGui::SetNextWindowBgAlpha(0.9f); // make menu opaque
     ImGui::SetNextWindowPos(menu_pos, ImGuiCond_Always);
     ImGui::SetNextWindowSize(menu_size, ImGuiCond_Always);
@@ -561,35 +572,16 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
         const bool popup_open = ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId);
         const bool nav_down = ImGui::IsKeyPressed(ImGuiKey_DownArrow, false);
         const bool nav_up = ImGui::IsKeyPressed(ImGuiKey_UpArrow, false);
-        if (!popup_open && (nav_down || nav_up) && last_focus_index_ >= 0 &&
-            last_focus_index_ < static_cast<int>(last_focus_index_to_col_.size()))
+        if (!popup_open && (nav_down || nav_up) && last_focus_index_ < 0 && pending_focus_index_ < 0)
         {
-            const int col = last_focus_index_to_col_[last_focus_index_];
-            const int pos = last_focus_index_to_pos_[last_focus_index_];
-            const auto &col_list = last_focus_columns_[col];
-            const auto &other_list = last_focus_columns_[1 - col];
-            if (nav_down)
-            {
-                if (pos + 1 < static_cast<int>(col_list.size()))
-                {
-                    pending_focus_index_ = col_list[pos + 1];
-                }
-                else if (!other_list.empty())
-                {
-                    pending_focus_index_ = other_list.front();
-                }
-            }
-            else if (nav_up)
-            {
-                if (pos > 0)
-                {
-                    pending_focus_index_ = col_list[pos - 1];
-                }
-                else if (!other_list.empty())
-                {
-                    pending_focus_index_ = other_list.back();
-                }
-            }
+            pending_focus_index_ = 0;
+            // Prevent ImGui default nav from skipping the first item on initial focus.
+            ImGuiIO &io = ImGui::GetIO();
+            const ImGuiKey key = nav_down ? ImGuiKey_DownArrow : ImGuiKey_UpArrow;
+            ImGuiKeyData &key_data = io.KeysData[key - ImGuiKey_NamedKey_BEGIN];
+            key_data.Down = false;
+            key_data.DownDuration = -1.0f;
+            key_data.DownDurationPrev = -1.0f;
         }
 
         int focus_index = 0;
@@ -599,12 +591,16 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
         std::vector<int> index_to_pos;
         auto register_focus = [&](int col, const std::function<void()> &draw)
         {
-            if (pending_focus_index_ == focus_index)
+            const bool want_focus = (pending_focus_index_ == focus_index);
+            if (want_focus)
             {
                 ImGui::SetKeyboardFocusHere();
-                pending_focus_index_ = -1;
             }
             draw();
+            if (want_focus)
+            {
+                pending_focus_index_ = -1;
+            }
             if (ImGui::IsItemFocused())
             {
                 focused_index = focus_index;
@@ -855,16 +851,10 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
                      { register_focus(0, [&]
                        {
                          const bool is_cc = state_.GetFirmwareType() == MenuState::FirmwareType::CCEdition;
-                         const bool is_official = state_.GetFirmwareType() == MenuState::FirmwareType::Official;
-                         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f, 4.0f));
                          if (ImGui::RadioButton(is_cn ? "CC (UDP)" : "CC (UDP)", is_cc)) {
                              state_.SetFirmwareType(MenuState::FirmwareType::CCEdition);
                          }
-                         ImGui::NewLine();
-                         if (ImGui::RadioButton(is_cn ? "\u5b98\u65b9 (SSH)" : "Official (SSH)", is_official)) {
-                             state_.SetFirmwareType(MenuState::FirmwareType::Official);
-                         }
-                         ImGui::PopStyleVar(); }); }, is_cn ? "\u8bed\u8a00" : "Language", [&]
+                       }); }, is_cn ? "\u8bed\u8a00" : "Language", [&]
                      { register_focus(1, [&]
                        {
                          const char *label = state_.GetLanguage() == MenuState::Language::CN ? "\u4e2d\u6587" : "English";
@@ -877,6 +867,16 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
                              }
                              ImGui::EndCombo();
                          } }); });
+
+            row_pair("", [&]
+                     { register_focus(0, [&]
+                       {
+                         const bool is_official = state_.GetFirmwareType() == MenuState::FirmwareType::Official;
+                         if (ImGui::RadioButton(is_cn ? "\u5b98\u65b9 (SSH)" : "Official (SSH)", is_official)) {
+                             state_.SetFirmwareType(MenuState::FirmwareType::Official);
+                         }
+                       }); }, "", [&]
+                     { ImGui::Dummy(ImVec2(-1, 0)); });
 
             row_pair("",
                      [&]
@@ -954,6 +954,35 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
                      });
 
             ImGui::EndTable();
+            if (!popup_open && focused_index >= 0 && (nav_down || nav_up))
+            {
+                const int col = index_to_col[focused_index];
+                const int pos = index_to_pos[focused_index];
+                const auto &col_list = focus_columns[col];
+                const auto &other_list = focus_columns[1 - col];
+                // Edge wrap: use actual focus lists so new items don't need manual index updates.
+                bool wrapped = false;
+                if (nav_down && pos == static_cast<int>(col_list.size()) - 1 && !other_list.empty())
+                {
+                    pending_focus_index_ = other_list.front();
+                    wrapped = true;
+                }
+                else if (nav_up && pos == 0 && !other_list.empty())
+                {
+                    pending_focus_index_ = other_list.back();
+                    wrapped = true;
+                }
+                if (wrapped)
+                {
+                    // Prevent ImGui default nav from moving focus inside the same column first.
+                    ImGuiIO &io = ImGui::GetIO();
+                    const ImGuiKey key = nav_down ? ImGuiKey_DownArrow : ImGuiKey_UpArrow;
+                    ImGuiKeyData &key_data = io.KeysData[key - ImGuiKey_NamedKey_BEGIN];
+                    key_data.Down = false;
+                    key_data.DownDuration = -1.0f;
+                    key_data.DownDurationPrev = -1.0f;
+                }
+            }
             // When adding/removing focusable widgets, keep the registration order
             // aligned with the table layout for predictable Up/Down navigation.
             last_focus_columns_ = focus_columns;

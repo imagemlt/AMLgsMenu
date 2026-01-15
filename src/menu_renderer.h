@@ -75,6 +75,7 @@ private:
     std::array<std::vector<int>, 2> last_focus_columns_{};
     std::vector<int> last_focus_index_to_col_;
     std::vector<int> last_focus_index_to_pos_;
+    bool menu_visible_last_ = false;
     int kodi_popup_focus_index_ = 0;
     bool kodi_popup_focus_dirty_ = false;
     int pending_high_refresh_index_ = -1;
