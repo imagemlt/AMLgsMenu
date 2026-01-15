@@ -713,6 +713,58 @@ void Application::ApplyBitrate()
         return;
     int br_mbps = bitrates[menu_state_->BitrateIndex()];
     int br_kbps = br_mbps * 1024; // CLI expects kbps; e.g. 2 -> 2048
+    {
+        const auto &mcs_levels = menu_state_->McsLevels();
+        if (!mcs_levels.empty())
+        {
+            // Ensure MCS can sustain at least 2x target bitrate (Wi-Fi 5, long GI, 1SS).
+            const float required_rate = static_cast<float>(br_mbps) * 2.0f;
+            const float rates_10[] = {3.25f, 6.5f, 9.75f, 13.0f, 19.5f, 26.0f, 29.25f, 32.5f, 39.0f, 43.3f};
+            const float rates_20[] = {6.5f, 13.0f, 19.5f, 26.0f, 39.0f, 52.0f, 58.5f, 65.0f, 78.0f, 86.7f};
+            const float rates_40[] = {13.5f, 27.0f, 40.5f, 54.0f, 81.0f, 108.0f, 121.5f, 135.0f, 162.0f, 180.0f};
+            const float *rates = rates_20;
+            switch (menu_state_->BandwidthIndex())
+            {
+            case 0:
+                rates = rates_10;
+                break;
+            case 2:
+                rates = rates_40;
+                break;
+            default:
+                rates = rates_20;
+                break;
+            }
+
+            int required_mcs = 9;
+            for (int i = 0; i < 10; ++i)
+            {
+                if (rates[i] >= required_rate)
+                {
+                    required_mcs = i;
+                    break;
+                }
+            }
+            int current_index = menu_state_->SkyMcsIndex();
+            if (current_index < 0 || current_index >= static_cast<int>(mcs_levels.size()))
+            {
+                current_index = 0;
+            }
+            int current_mcs = mcs_levels[current_index];
+            if (current_mcs < required_mcs)
+            {
+                int idx = FindMcsIndex(required_mcs);
+                if (idx < 0)
+                {
+                    idx = static_cast<int>(mcs_levels.size()) - 1;
+                }
+                if (idx >= 0 && idx < static_cast<int>(mcs_levels.size()))
+                {
+                    menu_state_->SetSkyMcsIndex(idx);
+                }
+            }
+        }
+    }
     if (auto transport = AcquireTransport())
     {
         std::unordered_map<std::string, std::string> vars{

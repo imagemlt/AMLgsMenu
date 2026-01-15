@@ -546,22 +546,24 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
     }
     menu_visible_last_ = true;
 
-    ImGui::SetNextWindowBgAlpha(0.9f); // make menu opaque
+    ImGui::SetNextWindowBgAlpha(0.6f); // keep menu semi-transparent
     ImGui::SetNextWindowPos(menu_pos, ImGuiCond_Always);
     ImGui::SetNextWindowSize(menu_size, ImGuiCond_Always);
 
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 12.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 8.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(20, 24, 32, 238));
-    ImGui::PushStyleColor(ImGuiCol_Border, IM_COL32(80, 200, 190, 255)); // teal border
-    ImGui::PushStyleColor(ImGuiCol_FrameBg, IM_COL32(34, 42, 54, 240));  // controls bg
-    ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, IM_COL32(60, 110, 125, 255));
-    ImGui::PushStyleColor(ImGuiCol_FrameBgActive, IM_COL32(78, 140, 155, 255));
-    ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(60, 140, 170, 240)); // default buttons
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(80, 170, 200, 255));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, IM_COL32(50, 120, 150, 255));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.3f);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.3f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(18.0f, 16.0f));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(18, 26, 36, 230));
+    ImGui::PushStyleColor(ImGuiCol_Border, IM_COL32(90, 220, 210, 255)); // brighter teal border
+    ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(235, 245, 255, 255));
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, IM_COL32(36, 52, 72, 230));  // glassy blue
+    ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, IM_COL32(58, 92, 122, 255));
+    ImGui::PushStyleColor(ImGuiCol_FrameBgActive, IM_COL32(76, 120, 150, 255));
+    ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(56, 110, 150, 235)); // vivid buttons
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(78, 140, 185, 255));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, IM_COL32(48, 96, 135, 255));
 
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse |
                              ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoTitleBar |
@@ -611,8 +613,12 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
             ++focus_index;
         };
 
+        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(210, 225, 240, 230));
         ImGui::TextUnformatted(is_cn ? "\u65e0\u7ebf\u94fe\u8def\u914d\u7f6e" : "Wireless Link Settings");
+        ImGui::PopStyleColor();
+        ImGui::Spacing();
         ImGui::Separator();
+        ImGui::Spacing();
 
         ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(12, 10)); // slightly taller rows
         if (ImGui::BeginTable("menu_table", 4, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoSavedSettings))
@@ -1155,6 +1161,6 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
     }
 
     ImGui::End();
-    ImGui::PopStyleColor(8);
-    ImGui::PopStyleVar(4);
+    ImGui::PopStyleColor(9);
+    ImGui::PopStyleVar(5);
 }
