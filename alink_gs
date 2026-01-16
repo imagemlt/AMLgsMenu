@@ -1,0 +1,466 @@
+#!/usr/bin/env python3
+import os
+import socket
+import json
+import time
+import argparse
+import struct
+import random
+import string
+import threading
+import configparser
+import subprocess
+
+# Defaults used to create new .conf when missing or incomplete
+DEFAULT_CONFIG = """# adaptive-link VRX settings
+
+[outgoing]
+udp_ip = 10.5.0.10
+udp_port = 9999
+
+[json]
+HOST = 127.0.0.1
+PORT = 8103
+
+[weights]
+snr_weight = 0.5
+rssi_weight = 0.5
+
+[ranges]
+SNR_MIN = 10
+SNR_MAX = 36
+RSSI_MIN = -85
+RSSI_MAX = -40
+
+[keyframe]
+allow_idr = TRue
+idr_max_messages = 20
+
+[dynamic refinement]
+allow_penalty = False
+allow_fec_increase = False
+
+[noise]
+min_noise = 0.01
+max_noise = 0.1
+deduction_exponent = 0.5
+min_noise_for_fec_change = 0.01
+noise_for_max_fec_change = 0.1
+
+[error estimation]
+kalman_estimate = 0.005
+kalman_error_estimate = 0.1
+process_variance = 1e-5
+measurement_variance = 0.01
+"""
+
+# List of required sections in the config
+REQUIRED_SECTIONS = {
+    'outgoing', 'json', 'weights', 'ranges', 
+    'keyframe', 'dynamic refinement', 'noise', 'error estimation'
+}
+
+# Function to create default config file
+def create_default_config(config_file):
+    # If the config file is a symlink, resolve it so that we write to its target.
+    target = os.path.realpath(config_file) if os.path.islink(config_file) else config_file
+    try:
+        with open(target, 'w') as f:
+            f.write(DEFAULT_CONFIG)
+        print(f"Created default config file at {target}")
+    except Exception as e:
+        print(f"Error writing default config file: {e}")
+
+def load_configuration(config_file):
+    config = configparser.ConfigParser()
+    read_files = config.read(config_file)
+    # Check if file is missing or doesn't contain all required sections
+    if not read_files or not REQUIRED_SECTIONS.issubset(set(config.sections())):
+        print("Configuration file missing or invalid. Creating default configuration...")
+        create_default_config(config_file)
+        config.read(config_file)
+    return config
+
+def send_udp(message):
+    message_bytes = message.encode('utf-8')
+    message_size = struct.pack('!I', len(message_bytes))  # Network byte order (big-endian)
+    full_message = message_size + message_bytes
+
+    try:
+        udp_socket.sendto(full_message, (udp_ip, udp_port))
+        if verbose_mode:
+            print(f"\nUDP Message Sent: {message} (size: {len(message_bytes)} bytes)\n")
+    except Exception as e:
+        if verbose_mode:
+            print(f"Error sending UDP data: {e}")
+
+def generate_message():
+    global keyframe_request_code, keyframe_request_remaining
+    timestamp = int(time.time())
+
+    # Base message without keyframe request code
+    message = f"{timestamp}:{int(final_score)}:{int(final_score)}:{int(fec_rec_packets)}:{int(lost_packets)}:{int(best_rssi)}:{int(best_snr)}:{int(num_antennas)}:{int(penalty)}:{int(fec_change)}"
+
+    # If there is an active keyframe request, tack the unique code onto the message.
+    if keyframe_request_code is not None and keyframe_request_remaining > 0:
+        message = f"{message}:{keyframe_request_code}"
+        keyframe_request_remaining -= 1
+        if keyframe_request_remaining == 0:
+            keyframe_request_code = None
+
+    send_udp(message)
+
+def kalman_filter_update(measurement):
+    global kalman_estimate, kalman_error_estimate
+
+    predicted_estimate = kalman_estimate
+    predicted_error = kalman_error_estimate + process_variance
+
+    kalman_gain = predicted_error / (predicted_error + measurement_variance)
+
+    kalman_estimate = predicted_estimate + kalman_gain * (measurement - predicted_estimate)
+    kalman_error_estimate = (1 - kalman_gain) * predicted_error
+
+    return kalman_estimate
+
+def adjust_fec_recovered(fec_rec, fec_k, fec_n):
+    """
+    If redundancy is high (fec_n - fec_k is large), then we expect more fec_rec,
+    so its contribution is reduced.
+    """
+    if fec_k is None or fec_n is None or fec_n == 0:
+        return fec_rec  # fallback if values are not available
+
+    redundancy = fec_n - fec_k
+    weight = 6.0 / (1 + redundancy)  # 6 makes 8/12 fec neutral
+    return fec_rec * weight
+
+def calculate_link():
+    global best_rssi, best_snr, lost_packets, fec_rec_packets, final_score, penalty, fec_change, keyframe_request_code, keyframe_request_remaining
+
+    # Start or override a keyframe request if necessary
+    if lost_packets > 0 and allow_idr:
+        keyframe_request_code = ''.join(random.choices(string.ascii_lowercase, k=4))
+        keyframe_request_remaining = idr_max_messages
+        if verbose_mode:
+            print(f"Generated new keyframe request code: {keyframe_request_code}")
+
+    if all_packets == 0 or num_antennas == 0:
+        filtered_noise = 0
+        error_ratio = 0
+    else:
+        # Adjust the fec_rec_packets contribution based on FEC settings
+        adjusted_fec_rec = adjust_fec_recovered(fec_rec_packets, fec_k, fec_n)
+        # Now calculate the error ratio with the adjusted fec recovery value
+        error_ratio = (5 * lost_packets + adjusted_fec_rec) / (all_packets / num_antennas)
+        filtered_noise = kalman_filter_update(error_ratio)
+
+    if verbose_mode:
+        print(f"\nRaw noise ratio: {error_ratio:.3f}\nFiltered noise ratio: {filtered_noise:.3f}")
+
+    # Normalize SNR and RSSI to a 0-1 scale.
+    snr_normalized = max(0, min(1, (best_snr - SNR_MIN) / (SNR_MAX - SNR_MIN)))
+    rssi_normalized = max(0, min(1, (best_rssi - RSSI_MIN) / (RSSI_MAX - RSSI_MIN)))
+    score_normalized = (snr_weight * snr_normalized) + (rssi_weight * rssi_normalized)
+    raw_score = 1000 + score_normalized * 1000
+
+    # Penalty logic based on noise estimation
+    if filtered_noise < min_noise:
+        deduction_ratio = 0.0
+    else:
+        deduction_ratio = min(((filtered_noise - min_noise) / (max_noise - min_noise)) ** deduction_exponent, 1.0)
+
+    final_score = 1000 + (raw_score - 1000) * (1 - deduction_ratio) if allow_penalty else raw_score
+    penalty = (final_score - raw_score) if allow_penalty else 0
+
+    # FEC change logic  
+    fec_change = (
+        0 if not allow_fec_increase or filtered_noise <= min_noise_for_fec_change else  
+        5 if filtered_noise >= noise_for_max_fec_change else  
+        int(round(((filtered_noise - min_noise_for_fec_change) / (max_noise - min_noise_for_fec_change)) * 5))  
+    )
+
+    if verbose_mode:
+        print(f"Noise triggered fec_change: {fec_change}, penalty: {penalty:.3f}")
+
+    generate_message()
+
+def connect_to_server(host, port):
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.connect((host, port))
+    print(f"\nReceiving wfb-ng stats from {host}:{port}")
+    return sock
+
+def print_video_metrics(rx_mcs):
+    print("\nReceiving_video:", receiving_video)
+    print(f"MCS: {rx_mcs} | fec_k: {fec_k} | fec_n: {fec_n}\n")
+    print(f"Num_antennas: {num_antennas} | Best_rssi: {best_rssi} | Best_snr: {best_snr}")
+    print("\nall_packets:", all_packets)
+    print("avg packets per antenna:", (all_packets / num_antennas) if num_antennas > 0 else 0)
+    print("Fec_rec:", fec_rec_packets)
+    print("Lost:", lost_packets)
+
+def handle_video_rx_stats(data):
+    global best_rssi, best_snr, all_packets, fec_rec_packets, lost_packets
+    global fec_k, fec_n, receiving_video, num_antennas, waiting_for_video_printed, video_rx_initial_message_printed
+    global keyframe_request_code, keyframe_request_remaining
+
+    packets = data.get("packets", {})
+    all_packets = packets.get("all", [0])[0]
+    # Determine if we're receiving video
+    receiving_video = (all_packets != 0)
+
+    fec_rec_packets = packets.get("fec_rec", [0])[0]
+    lost_packets = packets.get("lost", [0])[0]
+
+    session = data.get("session") or {}
+    fec_k = session.get("fec_k")
+    fec_n = session.get("fec_n")
+
+    rx_ant_stats = data.get("rx_ant_stats", [])
+    num_antennas = len(rx_ant_stats)
+
+    best_rssi = -101
+    best_snr = 0
+    rx_mcs = 0
+    for ant in rx_ant_stats:
+        rssi = ant.get("rssi_avg")
+        snr = ant.get("snr_avg")
+        mcs_val = ant.get("mcs")
+        if rssi is not None and rssi > best_rssi:
+            best_rssi = rssi
+        if snr is not None and snr > best_snr:
+            best_snr = snr
+        if mcs_val is not None and mcs_val > rx_mcs:
+            rx_mcs = mcs_val
+
+    if receiving_video:
+        # When video transmission starts, trigger a keyframe request.
+        # This block runs only on the first video stat update after a period of no video.
+        if not video_rx_initial_message_printed:
+            print("\nReceiving video_rx stats\nWorking...")
+            video_rx_initial_message_printed = True
+
+            # Always request a keyframe when video starts
+            keyframe_request_code = ''.join(random.choices(string.ascii_lowercase, k=4))
+            keyframe_request_remaining = idr_max_messages
+            if verbose_mode:
+                print(f"Generated new keyframe request code on video start: {keyframe_request_code}")
+
+        waiting_for_video_printed = False
+        calculate_link()
+        if verbose_mode:
+            print_video_metrics(rx_mcs)
+    else:
+        video_rx_initial_message_printed = False
+        if not waiting_for_video_printed:
+            print("\nWaiting for video_rx stats...")
+            waiting_for_video_printed = True
+
+def process_data_line(line):
+    try:
+        return json.loads(line)
+    except json.JSONDecodeError:
+        return None
+
+def listen_for_data(sock):
+    global waiting_for_video_printed
+    waiting_for_video_printed = False
+    # Wrap the file object usage in a try block to ensure proper cleanup
+    try:
+        with sock.makefile() as f:
+            for line in f:
+                if not line:
+                    break
+                data = process_data_line(line)
+                if data is None:
+                    continue
+                if data.get("type") == "rx" and data.get("id") == "video rx":
+                    handle_video_rx_stats(data)
+                else:
+                    global receiving_video
+                    receiving_video = False
+    except Exception as e:
+        if verbose_mode:
+            print(f"Error processing data: {e}")
+
+def connect_to_wfb_stats():
+    # Mirror AMLgsMenu: pull recent wifibroadcast logs via journalctl
+    cmd = [
+        "journalctl",
+        "-u",
+        "wifibroadcast",
+        "--since",
+        "5 seconds ago",
+        "--no-pager",
+        "--output=export",
+    ]
+
+    def split_fields(line, delim):
+        return line.split(delim) if line else []
+
+    def process_entry(message, antenna_map, stats):
+        if not message:
+            return
+        fields = split_fields(message, "\t")
+        if len(fields) < 2:
+            return
+        if fields[1] == "RX_ANT":
+            if len(fields) < 5:
+                return
+            try:
+                antenna_id = int(fields[3], 16)
+                stats_fields = split_fields(fields[4], ":")
+                if len(stats_fields) < 3:
+                    return
+                rssi_avg = float(stats_fields[2])
+                snr_avg = float(stats_fields[5]) if len(stats_fields) > 5 else 0.0
+                antenna_map[antenna_id] = (rssi_avg, snr_avg)
+            except Exception:
+                return
+        elif fields[1] == "PKT":
+            if len(fields) < 3:
+                return
+            stats_fields = split_fields(fields[2], ":")
+            if len(stats_fields) < 1:
+                return
+            try:
+                if len(stats_fields) > 1:
+                    stats["all_packets"] += int(stats_fields[1])
+                if len(stats_fields) > 2:
+                    stats["fec_rec"] += int(stats_fields[2])
+                if len(stats_fields) > 3:
+                    stats["lost"] += int(stats_fields[3])
+                stats["bytes"] += int(stats_fields[-1])
+                stats["saw_pkt"] = True
+            except Exception:
+                return
+
+    while True:
+        antenna_data = {}
+        stats = {"all_packets": 0, "fec_rec": 0, "lost": 0, "bytes": 0, "saw_pkt": False}
+        current_msg = None
+
+        try:
+            output = subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL)
+        except Exception as e:
+            if verbose_mode:
+                print(f"\n! No journalctl wfb-ng stats\n{e}\nRetrying in 3 seconds...")
+            time.sleep(3)
+            continue
+
+        for raw in output.splitlines():
+            line = raw.strip()
+            if not line:
+                if current_msg:
+                    process_entry(current_msg, antenna_data, stats)
+                    current_msg = None
+                continue
+            if line.startswith("MESSAGE="):
+                current_msg = line[8:]
+        if current_msg:
+            process_entry(current_msg, antenna_data, stats)
+
+        # Update globals based on latest snapshot
+        global best_rssi, best_snr, all_packets, fec_rec_packets, lost_packets
+        global receiving_video, num_antennas
+        best_rssi = -101
+        best_snr = 0
+        num_antennas = len(antenna_data)
+        for rssi_val, snr_val in antenna_data.values():
+            if rssi_val > best_rssi:
+                best_rssi = rssi_val
+            if snr_val > best_snr:
+                best_snr = snr_val
+
+        all_packets = stats["all_packets"]
+        fec_rec_packets = stats["fec_rec"]
+        lost_packets = stats["lost"]
+        receiving_video = stats["saw_pkt"] and stats["bytes"] > 0
+
+        if receiving_video:
+            calculate_link()
+        else:
+            if not waiting_for_video_printed:
+                print("\nWaiting for video_rx stats...")
+            global video_rx_initial_message_printed
+            video_rx_initial_message_printed = False
+
+        time.sleep(2)
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="xlink_gs")
+    parser.add_argument('--verbose', action='store_true', help='Enable verbose mode for logging')
+    parser.add_argument('--config', type=str, default='/etc/alink_gs.conf',
+                        help='Path to configuration file (default: /etc/alink_gs.conf)')
+    args = parser.parse_args()
+    verbose_mode = args.verbose
+
+    # Load configuration from the specified file
+    config = load_configuration(args.config)
+
+    # Outgoing settings (UDP)
+    udp_ip = config.get('outgoing', 'udp_ip')
+    udp_port = config.getint('outgoing', 'udp_port')
+
+    # JSON data settings
+    HOST = config.get('json', 'HOST')
+    PORT = config.getint('json', 'PORT')
+
+    # Weights
+    snr_weight = config.getfloat('weights', 'snr_weight')
+    rssi_weight = config.getfloat('weights', 'rssi_weight')
+
+    # Ranges for SNR and RSSI
+    SNR_MIN = config.getint('ranges', 'SNR_MIN')
+    SNR_MAX = config.getint('ranges', 'SNR_MAX')
+    RSSI_MIN = config.getint('ranges', 'RSSI_MIN')
+    RSSI_MAX = config.getint('ranges', 'RSSI_MAX')
+
+    # Keyframe settings
+    allow_idr = config.getboolean('keyframe', 'allow_idr')
+    idr_max_messages = config.getint('keyframe', 'idr_max_messages')
+
+    # Dynamic refinement settings
+    allow_penalty = config.getboolean('dynamic refinement', 'allow_penalty')
+    allow_fec_increase = config.getboolean('dynamic refinement', 'allow_fec_increase')
+
+    # Noise and penalty parameters
+    min_noise = config.getfloat('noise', 'min_noise')
+    max_noise = config.getfloat('noise', 'max_noise')
+    deduction_exponent = config.getfloat('noise', 'deduction_exponent')
+    min_noise_for_fec_change = config.getfloat('noise', 'min_noise_for_fec_change')
+    noise_for_max_fec_change = config.getfloat('noise', 'noise_for_max_fec_change')
+
+    # Error estimation parameters
+    kalman_estimate_default = config.getfloat('error estimation', 'kalman_estimate')
+    kalman_error_estimate_default = config.getfloat('error estimation', 'kalman_error_estimate')
+    process_variance = config.getfloat('error estimation', 'process_variance')
+    measurement_variance = config.getfloat('error estimation', 'measurement_variance')
+
+    # Global state variables
+    best_rssi = None
+    best_snr = None
+    all_packets = None
+    fec_rec_packets = None
+    lost_packets = None
+    fec_k = None
+    fec_n = None
+    receiving_video = None
+    num_antennas = None
+    penalty = 0
+    fec_change = 0
+    final_score = 1000
+    waiting_for_video_printed = False
+    video_rx_initial_message_printed = False
+
+    # Keyframe request globals
+    keyframe_request_code = None
+    keyframe_request_remaining = 0
+
+    # Kalman Filter variables for noise estimation – initialized from config values
+    kalman_estimate = kalman_estimate_default
+    kalman_error_estimate = kalman_error_estimate_default
+
+    udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    connect_to_wfb_stats()
