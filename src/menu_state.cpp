@@ -11,6 +11,7 @@ MenuState::MenuState(std::vector<VideoMode> sky_modes, std::vector<VideoMode> gr
       power_levels_(BuildRange(1, 60)),
       mcs_levels_(BuildRange(0, 12)),
       volume_levels_({10, 20, 30, 40, 50, 60, 70, 80, 90, 100}),
+      buffer_levels_(BuildRange(1, 64)),
       sky_modes_(std::move(sky_modes)),
       ground_modes_(std::move(ground_modes))
 {
@@ -26,6 +27,13 @@ MenuState::MenuState(std::vector<VideoMode> sky_modes, std::vector<VideoMode> gr
         if (sound_volume_index_ < 0 || sound_volume_index_ >= static_cast<int>(volume_levels_.size()))
         {
             sound_volume_index_ = static_cast<int>(volume_levels_.size()) - 1;
+        }
+    }
+    if (!buffer_levels_.empty())
+    {
+        if (buffer_level_index_ < 0 || buffer_level_index_ >= static_cast<int>(buffer_levels_.size()))
+        {
+            buffer_level_index_ = 0;
         }
     }
 }
@@ -149,6 +157,16 @@ void MenuState::SetSoundVolumeIndex(int index)
     }
     sound_volume_index_ = index;
     NotifyChange(SettingType::SoundVolume);
+}
+
+void MenuState::SetBufferLevelIndex(int index)
+{
+    if (buffer_level_index_ == index)
+    {
+        return;
+    }
+    buffer_level_index_ = index;
+    NotifyChange(SettingType::BufferLevel);
 }
 
 void MenuState::SetBadFrameIndex(int index)

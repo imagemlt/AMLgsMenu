@@ -29,6 +29,31 @@
 #define PATH_MAX 1024
 #endif
 
+namespace {
+static bool IsWideRune(Terminal::Rune u)
+{
+	// Basic East Asian wide/fullwidth ranges (approximate wcwidth behavior).
+	return (u >= 0x1100 && u <= 0x115F) ||
+	       (u >= 0x2329 && u <= 0x232A) ||
+	       (u >= 0x2E80 && u <= 0xA4CF) ||
+	       (u >= 0xAC00 && u <= 0xD7A3) ||
+	       (u >= 0xF900 && u <= 0xFAFF) ||
+	       (u >= 0xFE10 && u <= 0xFE19) ||
+	       (u >= 0xFE30 && u <= 0xFE6F) ||
+	       (u >= 0xFF00 && u <= 0xFF60) ||
+	       (u >= 0xFFE0 && u <= 0xFFE6) ||
+	       (u >= 0x1F300 && u <= 0x1F64F) ||
+	       (u >= 0x1F900 && u <= 0x1F9FF) ||
+	       (u >= 0x20000 && u <= 0x2FFFD) ||
+	       (u >= 0x30000 && u <= 0x3FFFD);
+}
+
+static int RuneWidth(Terminal::Rune u)
+{
+	return IsWideRune(u) ? 2 : 1;
+}
+} // namespace
+
 ImVec4 Terminal::defaultColorMap[16] = {
 	// Standard colors
 	ImVec4(0.0f, 0.0f, 0.0f, 1.0f), // Black
@@ -1321,6 +1346,16 @@ void Terminal::writeChar(Rune u)
 	g.trueColorFg = state.c.trueColorFg;
 	g.trueColorBg = state.c.trueColorBg;
 
+	int width = RuneWidth(u);
+	if (width == 2 && state.c.x == state.col - 1)
+	{
+		width = 1;
+	}
+	if (width == 2)
+	{
+		g.mode |= ATTR_WIDE;
+	}
+
 	// Set wrap flag if at end of line
 	if (state.c.x == state.col - 1)
 	{
@@ -1328,7 +1363,7 @@ void Terminal::writeChar(Rune u)
 	}
 
 	writeGlyph(g, state.c.x, state.c.y);
-	state.c.x++;
+	state.c.x += width;
 }
 
 int Terminal::eschandle(unsigned char ascii)

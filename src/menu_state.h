@@ -25,6 +25,7 @@ public:
         GroundPower,
         SoundEnable,
         SoundVolume,
+        BufferLevel,
         BadFramePolicy,
         AdaptiveLink,
         Recording,
@@ -55,6 +56,7 @@ public:
     const std::vector<int> &PowerLevels() const { return power_levels_; }
     const std::vector<int> &McsLevels() const { return mcs_levels_; }
     const std::vector<int> &VolumeLevels() const { return volume_levels_; }
+    const std::vector<int> &BufferLevels() const { return buffer_levels_; }
     bool MenuVisible() const { return menu_visible_; }
 
     int ChannelIndex() const { return channel_index_; }
@@ -66,6 +68,7 @@ public:
     int SkyMcsIndex() const { return sky_mcs_index_; }
     int GroundPowerIndex() const { return ground_power_index_; }
     int SoundVolumeIndex() const { return sound_volume_index_; }
+    int BufferLevelIndex() const { return buffer_level_index_; }
     int BadFrameIndex() const { return bad_frame_index_; }
     bool AdaptiveLinkEnabled() const { return adaptive_link_enabled_; }
     Language GetLanguage() const { return language_; }
@@ -84,6 +87,7 @@ public:
     void SetGroundPowerIndex(int index);
     void SetSoundEnabled(bool enabled);
     void SetSoundVolumeIndex(int index);
+    void SetBufferLevelIndex(int index);
     void SetBadFrameIndex(int index);
     void SetAdaptiveLinkEnabled(bool enabled);
     void SetLanguage(Language lang);
@@ -119,6 +123,7 @@ private:
     std::vector<int> power_levels_;
     std::vector<int> mcs_levels_;
     std::vector<int> volume_levels_;
+    std::vector<int> buffer_levels_;
     std::vector<VideoMode> sky_modes_;
     std::vector<VideoMode> ground_modes_;
     std::array<const char *, 3> bandwidths_{{"10 MHz", "20 MHz", "40 MHz"}};
@@ -135,6 +140,7 @@ private:
     int sky_mcs_index_ = 2;
     int ground_power_index_ = 0;
     int sound_volume_index_ = 9;
+    int buffer_level_index_ = 0;
     int bad_frame_index_ = 1;
     bool adaptive_link_enabled_ = false;
     Language language_ = Language::CN;

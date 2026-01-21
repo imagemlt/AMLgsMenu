@@ -82,7 +82,7 @@ void CommandTemplates::InitDefaults() {
     defaults_["remote"]["sky_power"] =
         "([ -f /etc/wfb.conf ] && sh -c 'tmp=/tmp/wfb_conf.$$.tmp; cp /etc/wfb.conf \"$tmp\" && sed -i \"s/^driver_txpower_override=.*/driver_txpower_override=$1/\" \"$tmp\" && cat \"$tmp\" > /etc/wfb.conf && rm -f \"$tmp\"' sh \"${POWER}\" || wifibroadcast cli -s .wireless.txpower ${POWER} ) && iw dev wlan0 set txpower fixed ${TXPOWER}";
     defaults_["remote"]["sky_mcs"] =
-        "([ -f /etc/wfb.conf ] && sh -c 'tmp=/tmp/wfb_conf.$$.tmp; cp /etc/wfb.conf \"$tmp\" && sed -i \"s/^mcs_index=.*/mcs_index=$1/\" \"$tmp\" && cat \"$tmp\" > /etc/wfb.conf && rm -f \"$tmp\"' sh \"${MCS}\" || wifibroadcast cli -s .broadcast.mcs_index ${MCS} )";
+        "([ -f /etc/wfb.conf ] && sh -c 'tmp=/tmp/wfb_conf.$$.tmp; cp /etc/wfb.conf \"$tmp\" && sed -i \"s/^mcs_index=.*/mcs_index=$1/\" \"$tmp\" && cat \"$tmp\" > /etc/wfb.conf && rm -f \"$tmp\" && . /etc/wfb.conf && wfb_tx_cmd 8000 set_radio -B $bandwidth -M $mcs_index -S $stbc -L $ldpc -G $guard_interval' sh \"${MCS}\" || wifibroadcast cli -s .broadcast.mcs_index ${MCS} )";
     defaults_["remote"]["request_idr"] =
         "curl -s http://localhost/request/idr >/dev/null";
     defaults_["remote_query"]["channel"] =

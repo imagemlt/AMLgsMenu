@@ -351,6 +351,7 @@ bool Application::Initialize(const std::string &font_path, bool use_mock,
         case MenuState::SettingType::SkyPower:
             ApplySkyPower();
             break;
+        /*
         case MenuState::SettingType::SoundEnable:
             SaveConfigValue("sound", menu_state_->SoundEnabled() ? "1" : "0");
             ApplySoundEnabled();
@@ -367,8 +368,28 @@ bool Application::Initialize(const std::string &font_path, bool use_mock,
             }
             break;
         }
+        */
+        case MenuState::SettingType::BufferLevel: {
+            const auto &levels = menu_state_->BufferLevels();
+            if (!levels.empty())
+            {
+                int idx = menu_state_->BufferLevelIndex();
+                if (idx < 0 || idx >= static_cast<int>(levels.size()))
+                    idx = 0;
+                SaveConfigValue("buf_level", std::to_string(levels[idx]));
+                if (cmd_runner_)
+                {
+                    cmd_runner_->EnqueueShell("systemctl restart amldigitalfpv");
+                }
+                else
+                {
+                    std::system("systemctl restart amldigitalfpv");
+                }
+            }
+            break;
+        }
         case MenuState::SettingType::BadFramePolicy: {
-            int value = (menu_state_->BadFrameIndex() == 0) ? 0 : 160;
+            int value = (menu_state_->BadFrameIndex() == 0) ? 0 : 176;
             SaveConfigValue("bad_frame", std::to_string(value));
             ApplyBadFramePolicy();
             break;
@@ -718,7 +739,11 @@ void Application::ApplyBitrate()
         if (!mcs_levels.empty())
         {
             // Ensure MCS can sustain at least 2x target bitrate (Wi-Fi 5, long GI, 1SS).
-            const float required_rate = static_cast<float>(br_mbps) * 2.0f;
+            float required_rate = static_cast<float>(br_mbps) * 2.0f;
+            if (br_mbps > 4)
+            {
+                required_rate += 1.0f;
+            }
             const float rates_10[] = {3.25f, 6.5f, 9.75f, 13.0f, 19.5f, 26.0f, 29.25f, 32.5f, 39.0f, 43.3f};
             const float rates_20[] = {6.5f, 13.0f, 19.5f, 26.0f, 39.0f, 52.0f, 58.5f, 65.0f, 78.0f, 86.7f};
             const float rates_40[] = {13.5f, 27.0f, 40.5f, 54.0f, 81.0f, 108.0f, 121.5f, 135.0f, 162.0f, 180.0f};
@@ -886,7 +911,7 @@ void Application::ApplySoundVolume()
 
 void Application::ApplyBadFramePolicy()
 {
-    int value = (menu_state_->BadFrameIndex() == 0) ? 0 : 160;
+    int value = (menu_state_->BadFrameIndex() == 0) ? 0 : 176;
     std::ofstream ofs("/sys/module/amvdec_h265/parameters/error_handle_policy");
     if (!ofs.is_open())
     {
@@ -897,6 +922,19 @@ void Application::ApplyBadFramePolicy()
     if (!ofs.good())
     {
         std::fprintf(stderr, "[AMLgsMenu] Failed to set error_handle_policy=%d\n", value);
+    }
+
+    if (value == 176)
+    {
+        std::system("echo 1 > /sys/module/amvdec_h265/parameters/hacked_lowlatency");
+        std::system("echo 0 > /sys/module/amvdec_h265/parameters/nal_skip_policy");
+        std::system("echo 0 > /sys/module/amvdec_h265/parameters/ref_frame_mark_flag");
+    }
+    else
+    {
+        std::system("echo 0 > /sys/module/amvdec_h265/parameters/hacked_lowlatency");
+        std::system("echo 2 > /sys/module/amvdec_h265/parameters/nal_skip_policy");
+        std::system("echo 1,1,1,1,1,1,1,1,1 > /sys/module/amvdec_h265/parameters/ref_frame_mark_flag");
     }
 }
 
@@ -2250,23 +2288,56 @@ void Application::LoadConfig()
         config_kv_["sound_volume"] = std::to_string(volume_levels[idx]);
     }
 
+    const auto &buffer_levels = menu_state_->BufferLevels();
+    if (!buffer_levels.empty())
+    {
+        int buffer_value = 1;
+        auto it_buf = config_kv_.find("buf_level");
+        if (it_buf != config_kv_.end())
+        {
+            try
+            {
+                buffer_value = std::stoi(it_buf->second);
+            }
+            catch (const std::exception &)
+            {
+                buffer_value = 1;
+            }
+        }
+        int idx = 0;
+        for (int i = 0; i < static_cast<int>(buffer_levels.size()); ++i)
+        {
+            if (buffer_levels[i] == buffer_value)
+            {
+                idx = i;
+                break;
+            }
+        }
+        if (idx < 0 || idx >= static_cast<int>(buffer_levels.size()))
+        {
+            idx = 0;
+        }
+        menu_state_->SetBufferLevelIndex(idx);
+        config_kv_["buf_level"] = std::to_string(buffer_levels[idx]);
+    }
+
     auto it_bad = config_kv_.find("bad_frame");
     if (it_bad != config_kv_.end())
     {
-        int val = 160;
+        int val = 176;
         try
         {
             val = std::stoi(it_bad->second);
         }
         catch (const std::exception &)
         {
-            val = 160;
+            val = 176;
         }
         menu_state_->SetBadFrameIndex(val == 0 ? 0 : 1);
     }
     else
     {
-        config_kv_["bad_frame"] = "160";
+        config_kv_["bad_frame"] = "176";
         menu_state_->SetBadFrameIndex(1);
     }
 }

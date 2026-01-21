@@ -534,7 +534,7 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
 
 void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
 {
-    const ImVec2 menu_size = ImVec2(viewport->Size.x * 0.54f, viewport->Size.y * 0.60f);
+    const ImVec2 menu_size = ImVec2(viewport->Size.x * 0.54f, viewport->Size.y * 0.65f);
     const ImVec2 menu_pos = ImVec2(viewport->Pos.x + viewport->Size.x * 0.23f,
                                    viewport->Pos.y + viewport->Size.y * 0.20f);
     const bool is_cn = state_.GetLanguage() == MenuState::Language::CN;
@@ -776,6 +776,7 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
                              ImGui::EndCombo();
                          } }); });
 
+            /*
             const auto &volume_levels = state_.VolumeLevels();
             row_pair(is_cn ? "\u58f0\u97f3\u5f00\u5173" : "Sound", [&]
                      { register_focus(0, [&]
@@ -815,6 +816,7 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
                              ImGui::EndCombo();
                          } });
                      });
+            */
 
             row_pair(is_cn ? "\u81ea\u9002\u5e94\u94fe\u8def" : "Adaptive Link", [&]
                      {
@@ -851,6 +853,45 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
                                  ImGui::EndCombo();
                              }
                          });
+                     });
+
+            const auto &buffer_levels = state_.BufferLevels();
+            row_pair(is_cn ? "\u7f13\u5b58\u7ea7\u522b" : "Buffer Level", [&]
+                     {
+                         if (buffer_levels.empty())
+                         {
+                             ImGui::TextUnformatted("--");
+                             return;
+                         }
+                         register_focus(0, [&]
+                         {
+                             int idx = state_.BufferLevelIndex();
+                             if (idx < 0 || idx >= static_cast<int>(buffer_levels.size()))
+                             {
+                                 idx = 0;
+                             }
+                             const std::string label = std::to_string(buffer_levels[idx]);
+                             if (ImGui::BeginCombo("##buffer_level", label.c_str()))
+                             {
+                                 for (int i = 0; i < static_cast<int>(buffer_levels.size()); ++i)
+                                 {
+                                     const std::string item_label = std::to_string(buffer_levels[i]);
+                                     bool selected = (idx == i);
+                                     if (ImGui::Selectable(item_label.c_str(), selected))
+                                     {
+                                         state_.SetBufferLevelIndex(i);
+                                     }
+                                     if (selected)
+                                         ImGui::SetItemDefaultFocus();
+                                 }
+                                 ImGui::EndCombo();
+                             }
+                         });
+                     },
+                     "",
+                     [&]
+                     {
+                             ImGui::Dummy(ImVec2(-1, 0));
                      });
 
             row_pair(is_cn ? "\u56fa\u4ef6\u6a21\u5f0f" : "Firmware", [&]
