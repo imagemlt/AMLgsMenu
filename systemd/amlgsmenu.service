@@ -4,7 +4,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/AMLgsMenu -t /storage/digitalfpv/fonts/YeZiGongChangGuaiJiaoHei-2.ttf
+ExecStart=/storage/digitalfpv/gsmenu.sh
 Restart=on-failure
 RestartSec=2
 StandardOutput=journal
@@ -12,3 +12,4 @@ StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
+
