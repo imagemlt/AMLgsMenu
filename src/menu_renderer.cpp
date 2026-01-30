@@ -16,6 +16,7 @@
 #include <GLES2/gl2.h>
 #include <thread>
 #include <iostream>
+#include <filesystem>
 
 static MenuRenderer::TelemetryData BuildMockTelemetry(const MenuState &state)
 {
@@ -40,13 +41,24 @@ static MenuRenderer::TelemetryData BuildMockTelemetry(const MenuState &state)
     data.longitude = -122.431 + 0.0015 * std::cos(t * 0.12f);
     data.altitude_m = 120.0f + 12.0f * std::sin(t * 0.35f);
     data.home_distance_m = 250.0f + 35.0f * std::cos(t * 0.45f);
+    data.has_home_bearing = true;
+    data.home_bearing_rel_deg = 45.0f * std::sin(t * 0.2f);
+    data.gps_satellites = 12 + static_cast<int>(3.0f * std::sin(t * 0.25f));
     data.cell_voltage = 3.8f + 0.12f * std::sin(t * 0.6f);
     data.pack_voltage = data.cell_voltage * 4.0f + 0.4f * std::cos(t * 0.3f);
     data.sky_temp_c = 45.0f + 5.0f * std::sin(t * 0.22f);
     data.roll_deg = 10.0f * std::sin(t * 0.6f);
-    data.pitch_deg = 5.0f * std::cos(t * 0.5f);
+    data.pitch_deg = 15.0f * std::cos(t * 0.5f);
+    data.has_speed = true;
+    data.ground_speed_mps = 12.0f + 2.0f * std::sin(t * 0.45f);
+    data.air_speed_mps = 11.0f + 2.5f * std::cos(t * 0.4f);
     data.rc_signal = -55.0f + 4.0f * std::sin(t * 1.1f);
     data.ground_batt_percent = 70.0f + 10.0f * std::sin(t * 0.3f);
+    data.has_rc = true;
+    data.rc_left_x = std::sin(t * 0.6f);
+    data.rc_left_y = std::cos(t * 0.6f);
+    data.rc_right_x = std::sin(t * 0.9f + 1.0f);
+    data.rc_right_y = std::cos(t * 0.9f + 1.0f);
 
     // Ground-related metrics: sample at most once per second
     static MenuRenderer::TelemetryData ground_cache{};
@@ -57,6 +69,8 @@ static MenuRenderer::TelemetryData BuildMockTelemetry(const MenuState &state)
         ground_cache.ground_signal_a = -60.0f + 5.0f * std::sin(t * 0.8f);
         ground_cache.ground_signal_b = -62.0f + 6.0f * std::cos(t * 0.65f);
         ground_cache.ground_temp_c = ReadTemperatureC();
+        ground_cache.wifi_monitor_count = 0;
+        ground_cache.has_wifi_monitor = false;
 
         const auto &ground_modes = state.GroundModes();
         VideoMode mode = ground_modes.empty() ? VideoMode{"1920x1080 @ 60Hz", 1920, 1080, 60}
@@ -83,6 +97,8 @@ static MenuRenderer::TelemetryData BuildMockTelemetry(const MenuState &state)
     data.ground_signal_a = ground_cache.ground_signal_a;
     data.ground_signal_b = ground_cache.ground_signal_b;
     data.ground_temp_c = ground_cache.ground_temp_c;
+    data.wifi_monitor_count = ground_cache.wifi_monitor_count;
+    data.has_wifi_monitor = ground_cache.has_wifi_monitor;
     data.video_resolution = ground_cache.video_resolution;
     data.video_refresh_hz = ground_cache.video_refresh_hz;
     data.bitrate_mbps = ground_cache.bitrate_mbps;
@@ -92,9 +108,14 @@ static MenuRenderer::TelemetryData BuildMockTelemetry(const MenuState &state)
 
 MenuRenderer::MenuRenderer(MenuState &state, bool &use_mock, std::function<TelemetryData(TelemetryData)> provider,
                            std::function<void()> toggle_terminal,
-                           std::function<bool()> terminal_visible)
+                           std::function<bool()> terminal_visible,
+                           std::function<void(const std::string &)> start_update,
+                           std::function<int()> update_status,
+                           std::function<void()> request_reboot)
     : state_(state), use_mock_(use_mock), telemetry_provider_(std::move(provider)),
-      toggle_terminal_(std::move(toggle_terminal)), terminal_visible_(std::move(terminal_visible))
+      toggle_terminal_(std::move(toggle_terminal)), terminal_visible_(std::move(terminal_visible)),
+      start_update_(std::move(start_update)), update_status_(std::move(update_status)),
+      request_reboot_(std::move(request_reboot))
 {
     int w = 0, h = 0;
     const char *icon_base = "/storage/digitalfpv/icons/";
@@ -102,6 +123,7 @@ MenuRenderer::MenuRenderer(MenuState &state, bool &use_mock, std::function<Telem
     LoadIcon(std::string(icon_base + std::string("battery_per.png")).c_str(), icon_batt_cell_, w, h);
     LoadIcon(std::string(icon_base + std::string("battery_all.png")).c_str(), icon_batt_pack_, w, h);
     LoadIcon(std::string(icon_base + std::string("gps.png")).c_str(), icon_gps_, w, h);
+    LoadIcon(std::string(icon_base + std::string("speed.png")).c_str(), icon_speed_, w, h);
     LoadIcon(std::string(icon_base + std::string("monitor.png")).c_str(), icon_monitor_, w, h);
     LoadIcon(std::string(icon_base + std::string("temp_air.png")).c_str(), icon_temp_air_, w, h);
     LoadIcon(std::string(icon_base + std::string("temp_ground.png")).c_str(), icon_temp_ground_, w, h);
@@ -271,6 +293,17 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
     const float icon_gap = 6.0f * 1.5f;
     const ImU32 text_outline = IM_COL32(0, 0, 0, 255);    // solid black edge
     const ImU32 text_fill = IM_COL32(235, 245, 255, 255); // cool light tone for visibility
+    auto draw_text_outline = [&](ImFont *font, float size, ImVec2 pos, ImU32 fill, ImU32 outline, const char *text)
+    {
+        const ImVec2 offsets[] = {
+            ImVec2(-1.1f, 0.0f), ImVec2(1.1f, 0.0f), ImVec2(0.0f, -1.1f), ImVec2(0.0f, 1.1f),
+            ImVec2(-0.8f, -0.8f), ImVec2(0.8f, -0.8f), ImVec2(-0.8f, 0.8f), ImVec2(0.8f, 0.8f)};
+        for (const auto &off : offsets)
+        {
+            draw_list->AddText(font, size, ImVec2(pos.x + off.x, pos.y + off.y), outline, text);
+        }
+        draw_list->AddText(font, size, pos, fill, text);
+    };
 
     auto draw_icon = [&](ImVec2 pos, ImTextureID tex)
     {
@@ -287,41 +320,110 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
         }
     };
 
-    if (!use_mock_ && !has_mavlink_data_)
+    if (!use_mock_ && data.has_wifi_monitor)
     {
-        // show WAITING notice but continue drawing ground/local info
-        const char *msg = is_cn ? "WAITING" : "WAITING";
+        char wifi_buf[64];
+        std::snprintf(wifi_buf, sizeof(wifi_buf), "%d WIFI PLUGGED", data.wifi_monitor_count);
         ImVec2 pos(viewport->Pos.x + 20.0f, viewport->Pos.y + 20.0f);
         float small = ImGui::GetFontSize() * 0.85f;
-        draw_list->AddText(ImGui::GetFont(), small, ImVec2(pos.x + 1, pos.y + 1), text_outline, msg);
-        draw_list->AddText(ImGui::GetFont(), small, pos, text_fill, msg);
+        draw_text_outline(ImGui::GetFont(), small, pos, text_fill, text_outline, wifi_buf);
     }
 
     auto draw_horizon = [&](float roll_deg, float pitch_deg)
     {
         const float line_half_len = viewport->Size.x * 0.25f * 0.66f; // lengthen a bit vs previous
+        const float tick_half_len = line_half_len * 0.04f;
+        const float tick_gap = line_half_len;
+        const float tick_step_deg = 5.0f;
+        const int tick_count = 18;
         const float rad = roll_deg * 3.1415926f / 180.0f;
         const float cosr = std::cos(rad);
         const float sinr = std::sin(rad);
         ImVec2 left(-line_half_len, 0.0f);
         ImVec2 right(line_half_len, 0.0f);
+        ImVec2 tick_left(-tick_half_len, 0.0f);
+        ImVec2 tick_right(tick_half_len, 0.0f);
         auto rotate = [&](const ImVec2 &p)
         {
             return ImVec2(p.x * cosr - p.y * sinr, p.x * sinr + p.y * cosr);
         };
-        const float pitch_offset = pitch_deg * 4.0f; // pixels per degree, tweak as needed
+        const float pitch_offset = pitch_deg * 2.0f; // pixels per degree, tweak as needed
         ImVec2 p1 = rotate(left);
         ImVec2 p2 = rotate(right);
         p1.x += center.x;
         p2.x += center.x;
         p1.y += center.y + pitch_offset;
         p2.y += center.y + pitch_offset;
-        draw_list->AddLine(p1, p2, IM_COL32(255, 255, 255, 255), 2.0f);
+        draw_list->AddLine(p1, p2, IM_COL32(0, 0, 0, 235), 4.6f);
+        draw_list->AddLine(p1, p2, IM_COL32(255, 255, 255, 255), 2.6f);
+
+        // Pitch ladder ticks (screen-aligned, fixed on screen)
+        ImVec2 zero_l(center.x - tick_gap, center.y);
+        ImVec2 zero_r(center.x + tick_gap, center.y);
+        draw_list->AddLine(zero_l, zero_r, IM_COL32(0, 0, 0, 180), 2.2f);
+        draw_list->AddLine(zero_l, zero_r, IM_COL32(255, 255, 255, 140), 1.2f);
+        for (int i = 1; i <= tick_count; ++i)
+        {
+            float delta = tick_step_deg * static_cast<float>(i);
+            float y_up = center.y - (delta * 2.0f);
+            float y_dn = center.y + (delta * 2.0f);
+
+            ImVec2 up_l1(center.x - tick_gap - tick_half_len, y_up);
+            ImVec2 up_l2(center.x - tick_gap + tick_half_len, y_up);
+            ImVec2 up_r1(center.x + tick_gap - tick_half_len, y_up);
+            ImVec2 up_r2(center.x + tick_gap + tick_half_len, y_up);
+            draw_list->AddLine(up_l1, up_l2, IM_COL32(0, 0, 0, 180), 2.6f);
+            draw_list->AddLine(up_r1, up_r2, IM_COL32(0, 0, 0, 180), 2.6f);
+            draw_list->AddLine(up_l1, up_l2, IM_COL32(255, 255, 255, 200), 1.6f);
+            draw_list->AddLine(up_r1, up_r2, IM_COL32(255, 255, 255, 200), 1.6f);
+
+            ImVec2 dn_l1(center.x - tick_gap - tick_half_len, y_dn);
+            ImVec2 dn_l2(center.x - tick_gap + tick_half_len, y_dn);
+            ImVec2 dn_r1(center.x + tick_gap - tick_half_len, y_dn);
+            ImVec2 dn_r2(center.x + tick_gap + tick_half_len, y_dn);
+            draw_list->AddLine(dn_l1, dn_l2, IM_COL32(0, 0, 0, 180), 2.6f);
+            draw_list->AddLine(dn_r1, dn_r2, IM_COL32(0, 0, 0, 180), 2.6f);
+            draw_list->AddLine(dn_l1, dn_l2, IM_COL32(255, 255, 255, 200), 1.6f);
+            draw_list->AddLine(dn_r1, dn_r2, IM_COL32(255, 255, 255, 200), 1.6f);
+        }
     };
     if (data.has_attitude)
     {
         draw_horizon(data.roll_deg, data.pitch_deg);
     }
+
+    /*if (data.has_rc)
+    {
+        const float box_size = 70.0f;
+        const float box_gap = 26.0f;
+        const float box_margin = 6.0f;
+        ImVec2 center_bottom(viewport->Pos.x + viewport->Size.x * 0.5f,
+                             viewport->Pos.y + viewport->Size.y - 18.0f);
+        float total_w = box_size * 2.0f + box_gap;
+        ImVec2 left_top(center_bottom.x - total_w * 0.5f,
+                        center_bottom.y - box_size);
+        ImVec2 right_top(left_top.x + box_size + box_gap, left_top.y);
+        ImU32 box_col = IM_COL32(255, 255, 255, 190);
+        draw_list->AddRect(left_top, ImVec2(left_top.x + box_size, left_top.y + box_size), box_col, 3.0f, 0, 1.6f);
+        draw_list->AddRect(right_top, ImVec2(right_top.x + box_size, right_top.y + box_size), box_col, 3.0f, 0, 1.6f);
+
+        auto clamp = [](float v) {
+            if (v > 1.0f) return 1.0f;
+            if (v < -1.0f) return -1.0f;
+            return v;
+        };
+        float range = (box_size * 0.5f) - box_margin;
+        ImVec2 left_center(left_top.x + box_size * 0.5f, left_top.y + box_size * 0.5f);
+        ImVec2 right_center(right_top.x + box_size * 0.5f, right_top.y + box_size * 0.5f);
+        float lx = clamp(data.rc_left_x);
+        float ly = clamp(data.rc_left_y);
+        float rx = clamp(data.rc_right_x);
+        float ry = clamp(data.rc_right_y);
+        ImVec2 left_dot(left_center.x + lx * range, left_center.y - ly * range);
+        ImVec2 right_dot(right_center.x + rx * range, right_center.y - ry * range);
+        draw_list->AddCircleFilled(left_dot, 6.0f, IM_COL32(255, 255, 255, 230));
+        draw_list->AddCircleFilled(right_dot, 6.0f, IM_COL32(255, 255, 255, 230));
+    }*/
 
     auto draw_centered_text = [&](ImVec2 pos, const std::string &text, ImU32 color, ImTextureID tex)
     {
@@ -329,17 +431,14 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
         ImVec2 icon_pos(pos.x - size.x * 0.5f - icon_size - icon_gap, pos.y);
         draw_icon(icon_pos, tex);
         ImVec2 text_pos(icon_pos.x + icon_size + icon_gap, pos.y);
-        // Shadow
-        draw_list->AddText(ImVec2(text_pos.x + 1.2f, text_pos.y + 1.2f), text_outline, text.c_str());
-        draw_list->AddText(text_pos, color, text.c_str());
+        draw_text_outline(ImGui::GetFont(), ImGui::GetFontSize(), text_pos, color, text_outline, text.c_str());
     };
 
     auto draw_centered_text_no_icon = [&](ImVec2 pos, const std::string &text, ImU32 color)
     {
         ImVec2 size = ImGui::CalcTextSize(text.c_str());
         ImVec2 text_pos(pos.x - size.x * 0.5f, pos.y);
-        draw_list->AddText(ImVec2(text_pos.x + 1.2f, text_pos.y + 1.2f), text_outline, text.c_str());
-        draw_list->AddText(text_pos, color, text.c_str());
+        draw_text_outline(ImGui::GetFont(), ImGui::GetFontSize(), text_pos, color, text_outline, text.c_str());
     };
 
     float signal_block_bottom = viewport->Pos.y + viewport->Size.y * 0.05f;
@@ -380,8 +479,7 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
         ImVec2 size = ImGui::CalcTextSize(label.c_str());
         ImVec2 pos(center.x - size.x * 0.5f, center.y - viewport->Size.y * 0.25f);
         ImDrawList *dl = draw_list;
-        dl->AddText(font, mode_size, ImVec2(pos.x + 1.5f, pos.y + 1.5f), mode_outline, label.c_str());
-        dl->AddText(font, mode_size, pos, mode_fill, label.c_str());
+        draw_text_outline(font, mode_size, pos, mode_fill, mode_outline, label.c_str());
     }
 
     ImGuiWindowFlags overlay_flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
@@ -392,10 +490,10 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
     {
         ImVec2 start = ImGui::GetCursorScreenPos();
         draw_icon(start, tex);
-        ImGui::Dummy(ImVec2(icon_size + icon_gap, icon_size));
-        ImGui::SameLine();
-        ImGui::SetCursorScreenPos(ImVec2(start.x + icon_size + icon_gap, start.y));
-        ImGui::TextUnformatted(text);
+        ImVec2 text_pos(start.x + icon_size + icon_gap, start.y);
+        ImVec2 text_size = ImGui::CalcTextSize(text);
+        draw_text_outline(ImGui::GetFont(), ImGui::GetFontSize(), text_pos, text_fill, text_outline, text);
+        ImGui::Dummy(ImVec2(icon_size + icon_gap + text_size.x, icon_size));
     };
 
     if (data.has_gps)
@@ -406,6 +504,34 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
         if (ImGui::Begin("OSD_GPS", nullptr, overlay_flags))
         {
             ImGui::PushStyleColor(ImGuiCol_Text, text_fill);
+            if (data.has_speed)
+            {
+                char speed_buf[64];
+                if (is_cn)
+                {
+                    snprintf(speed_buf, sizeof(speed_buf), "\u5730\u901f/\u7a7a\u901f: %.1f/%.1f m/s",
+                             data.ground_speed_mps, data.air_speed_mps);
+                }
+                else
+                {
+                    snprintf(speed_buf, sizeof(speed_buf), "GS/AS: %.1f/%.1f m/s",
+                             data.ground_speed_mps, data.air_speed_mps);
+                }
+                icon_text_line(speed_buf, icon_speed_);
+            }
+            char sat_buf[64];
+            if (data.gps_satellites >= 0)
+            {
+                if (is_cn)
+                {
+                    snprintf(sat_buf, sizeof(sat_buf), "\u536b\u661f\u6570: %d", data.gps_satellites);
+                }
+                else
+                {
+                    snprintf(sat_buf, sizeof(sat_buf), "Satellites: %d", data.gps_satellites);
+                }
+                icon_text_line(sat_buf, icon_gps_);
+            }
             char gps_buf[128];
             if (is_cn)
             {
@@ -428,6 +554,28 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
                 snprintf(home_buf, sizeof(home_buf), "Home Dist: %.1fm", data.home_distance_m);
             }
             icon_text_line(home_buf, icon_gps_);
+            if (data.has_home_bearing)
+            {
+                ImVec2 text_max = ImGui::GetItemRectMax();
+                const float arrow_shift = ImGui::CalcTextSize("000000").x;
+                ImVec2 arrow_center(text_max.x + 32.0f + arrow_shift, text_max.y - icon_size * 0.5f + 2.0f);
+                float rel_rad = data.home_bearing_rel_deg * 3.1415926f / 180.0f;
+                ImVec2 dir(std::sin(rel_rad), -std::cos(rel_rad));
+                ImVec2 side(-dir.y, dir.x);
+                float size = 21.0f;
+                ImVec2 tip = ImVec2(arrow_center.x + dir.x * size, arrow_center.y + dir.y * size);
+                ImVec2 left = ImVec2(arrow_center.x - dir.x * size * 0.6f + side.x * size * 0.6f,
+                                     arrow_center.y - dir.y * size * 0.6f + side.y * size * 0.6f);
+                ImVec2 right = ImVec2(arrow_center.x - dir.x * size * 0.6f - side.x * size * 0.6f,
+                                      arrow_center.y - dir.y * size * 0.6f - side.y * size * 0.6f);
+                draw_list->AddTriangleFilled(tip, left, right, IM_COL32(255, 255, 255, 220));
+                draw_list->AddTriangle(tip, left, right, IM_COL32(0, 0, 0, 180), 1.5f);
+                const char *home_label = is_cn ? "回家方向" : "HOME DIRCT";
+                ImVec2 label_size = ImGui::CalcTextSize(home_label);
+                ImVec2 label_pos(arrow_center.x - size - label_size.x - 14.0f,
+                                 arrow_center.y - label_size.y * 0.5f);
+                draw_text_outline(ImGui::GetFont(), ImGui::GetFontSize(), label_pos, text_fill, text_outline, home_label);
+            }
             ImGui::PopStyleColor();
         }
         ImGui::End();
@@ -490,11 +638,15 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
             char cell_buf[32];
             if (is_cn)
             {
-                snprintf(cell_buf, sizeof(cell_buf), "\u5355\u8282: %.2fV", data.cell_voltage);
+                snprintf(cell_buf, sizeof(cell_buf), "%s: %.2fV",
+                         data.cell_voltage_estimated ? "\u5355\u8282(\u4f30)" : "\u5355\u8282",
+                         data.cell_voltage);
             }
             else
             {
-                snprintf(cell_buf, sizeof(cell_buf), "Cell: %.2fV", data.cell_voltage);
+                snprintf(cell_buf, sizeof(cell_buf), "%s: %.2fV",
+                         data.cell_voltage_estimated ? "Cell~" : "Cell",
+                         data.cell_voltage);
             }
             icon_text_line(cell_buf, icon_batt_cell_);
             char pack_buf[32];
@@ -545,6 +697,22 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
         last_focus_index_ = -1;
     }
     menu_visible_last_ = true;
+    if (update_status_)
+    {
+        int status = update_status_();
+        if (status != update_status_last_)
+        {
+            if (status == 2)
+            {
+                update_reboot_popup_pending_ = true;
+            }
+            else if (status == 3)
+            {
+                update_failed_popup_pending_ = true;
+            }
+            update_status_last_ = status;
+        }
+    }
 
     ImGui::SetNextWindowBgAlpha(0.6f); // keep menu semi-transparent
     ImGui::SetNextWindowPos(menu_pos, ImGuiCond_Always);
@@ -962,25 +1130,76 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
             row_pair("",
                      [&]
                      {
-                         register_focus(0, [&]
-                         {
-                             if (ImGui::Button(is_cn ? "\u6253\u5f00 KODI" : "Open KODI", ImVec2(-1, 0)))
-                             {
-                                 kodi_popup_requested = true;
-                             }
-                         });
+                        register_focus(0, [&]
+                        {
+                            if (ImGui::Button(is_cn ? "\u66f4\u65b0\u56fa\u4ef6" : "Update", ImVec2(-1, 0)))
+                            {
+                                namespace fs = std::filesystem;
+                                std::string found_path;
+                                fs::path flash_path("/flash/update_fpv.tar.gz");
+                                std::error_code ec;
+                                if (fs::exists(flash_path, ec))
+                                {
+                                    found_path = flash_path.string();
+                                }
+                                else
+                                {
+                                    fs::path media_root("/media");
+                                    if (fs::exists(media_root, ec))
+                                    {
+                                        for (const auto &entry : fs::directory_iterator(media_root, ec))
+                                        {
+                                            if (!entry.is_directory())
+                                                continue;
+                                            fs::path candidate = entry.path() / "update_fpv.tar.gz";
+                                            if (fs::exists(candidate, ec))
+                                            {
+                                                found_path = candidate.string();
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                                if (!found_path.empty())
+                                {
+                                    update_path_ = found_path;
+                                    update_popup_pending_ = true;
+                                }
+                                else
+                                {
+                                    update_missing_popup_pending_ = true;
+                                }
+                            }
+                        });
                      },
                      "",
                      [&]
                      {
-                         register_focus(1, [&]
-                         {
-                             if (ImGui::Button(is_cn ? "\u542f\u52a8\u5230\u5b89\u5353" : "Boot to Android", ImVec2(-1, 0)))
-                             {
-                                 std::system("/sbin/rebootfromnand;reboot");
-                                 running_flag = false;
-                             }
-                         });
+                        register_focus(1, [&]
+                        {
+                            if (ImGui::Button(is_cn ? "\u6253\u5f00 KODI" : "Open KODI", ImVec2(-1, 0)))
+                            {
+                                kodi_popup_requested = true;
+                            }
+                        });
+                     });
+
+            row_pair("",
+                     [&]
+                     {
+                        ImGui::Dummy(ImVec2(-1, 0));
+                     },
+                     "",
+                     [&]
+                     {
+                        register_focus(1, [&]
+                        {
+                            if (ImGui::Button(is_cn ? "\u542f\u52a8\u5230\u5b89\u5353" : "Boot to Android", ImVec2(-1, 0)))
+                            {
+                                std::system("/sbin/rebootfromnand;reboot");
+                                running_flag = false;
+                            }
+                        });
                      });
 
             row_pair("",
@@ -1198,6 +1417,173 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
                 kodi_popup_focus_index_ = 0;
                 kodi_popup_focus_dirty_ = true; });
             ImGui::EndPopup();
+        }
+
+        if (update_popup_pending_)
+        {
+            ImGui::OpenPopup("confirm_update");
+            update_popup_pending_ = false;
+        }
+        ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + viewport->Size.x * 0.5f,
+                                       viewport->Pos.y + viewport->Size.y * 0.5f),
+                                ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+        if (ImGui::BeginPopupModal("confirm_update", nullptr,
+                                   ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar))
+        {
+            const char *msg = is_cn ? "\u53d1\u73b0\u66f4\u65b0\u5305\uff0c\u662f\u5426\u5f00\u59cb\u66f4\u65b0\uff1f"
+                                    : "Update package found. Start update?";
+            ImGui::TextWrapped("%s", msg);
+            if (!update_path_.empty())
+            {
+                ImGui::TextWrapped("%s", update_path_.c_str());
+            }
+            ImGui::Spacing();
+            const float button_width = 140.0f;
+            const float spacing = ImGui::GetStyle().ItemSpacing.x;
+            const float total_width = button_width * 2.0f + spacing;
+            const float region_width = ImGui::GetContentRegionAvail().x;
+            const float base_x = ImGui::GetCursorPosX();
+            if (region_width > total_width)
+            {
+                ImGui::SetCursorPosX(base_x + (region_width - total_width) * 0.5f);
+            }
+            if (ImGui::Button(is_cn ? "\u53d6\u6d88" : "Cancel", ImVec2(button_width, 0)))
+            {
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button(is_cn ? "\u786e\u8ba4" : "Confirm", ImVec2(button_width, 0)))
+            {
+                if (start_update_)
+                {
+                    start_update_(update_path_);
+                }
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+
+        if (update_missing_popup_pending_)
+        {
+            ImGui::OpenPopup("update_not_found");
+            update_missing_popup_pending_ = false;
+        }
+        ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + viewport->Size.x * 0.5f,
+                                       viewport->Pos.y + viewport->Size.y * 0.5f),
+                                ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+        ImGui::SetNextWindowSize(ImVec2(320.0f, 0.0f), ImGuiCond_Always);
+        if (ImGui::BeginPopupModal("update_not_found", nullptr,
+                                   ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar))
+        {
+            const char *msg = is_cn ? "\u672a\u627e\u5230\u66f4\u65b0\u5305" : "Update package not found";
+            const float button_width = 120.0f;
+            const float region_width = ImGui::GetContentRegionAvail().x;
+            const float base_x = ImGui::GetCursorPosX();
+            const float text_width = ImGui::CalcTextSize(msg).x;
+            if (region_width > text_width)
+            {
+                ImGui::SetCursorPosX(base_x + (region_width - text_width) * 0.5f);
+            }
+            ImGui::TextWrapped("%s", msg);
+            ImGui::Spacing();
+            if (region_width > button_width)
+            {
+                ImGui::SetCursorPosX(base_x + (region_width - button_width) * 0.5f);
+            }
+            if (ImGui::Button(is_cn ? "\u786e\u5b9a" : "OK", ImVec2(button_width, 0)))
+            {
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+
+        if (update_failed_popup_pending_)
+        {
+            ImGui::OpenPopup("update_failed");
+            update_failed_popup_pending_ = false;
+        }
+        ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + viewport->Size.x * 0.5f,
+                                       viewport->Pos.y + viewport->Size.y * 0.5f),
+                                ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+        if (ImGui::BeginPopupModal("update_failed", nullptr,
+                                   ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar))
+        {
+            const char *msg = is_cn ? "\u66f4\u65b0\u5931\u8d25" : "Update failed";
+            ImGui::TextWrapped("%s", msg);
+            ImGui::Spacing();
+            if (ImGui::Button(is_cn ? "\u786e\u5b9a" : "OK", ImVec2(120, 0)))
+            {
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+
+        if (update_reboot_popup_pending_)
+        {
+            ImGui::OpenPopup("update_reboot");
+            update_reboot_popup_pending_ = false;
+        }
+        if (update_status_)
+        {
+            const int status = update_status_();
+            if (status == 1 && !ImGui::IsPopupOpen("update_in_progress"))
+            {
+                ImGui::OpenPopup("update_in_progress");
+            }
+        }
+        ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + viewport->Size.x * 0.5f,
+                                       viewport->Pos.y + viewport->Size.y * 0.5f),
+                                ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+        if (ImGui::BeginPopupModal("update_reboot", nullptr,
+                                   ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar))
+        {
+            const char *msg = is_cn ? "\u66f4\u65b0\u5b8c\u6210\uff0c\u662f\u5426\u91cd\u542f\uff1f"
+                                    : "Update completed. Reboot now?";
+            ImGui::TextWrapped("%s", msg);
+            ImGui::Spacing();
+            const float button_width = 140.0f;
+            const float spacing = ImGui::GetStyle().ItemSpacing.x;
+            const float total_width = button_width * 2.0f + spacing;
+            const float region_width = ImGui::GetContentRegionAvail().x;
+            const float base_x = ImGui::GetCursorPosX();
+            if (region_width > total_width)
+            {
+                ImGui::SetCursorPosX(base_x + (region_width - total_width) * 0.5f);
+            }
+            if (ImGui::Button(is_cn ? "\u7a0d\u540e" : "Later", ImVec2(button_width, 0)))
+            {
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button(is_cn ? "\u91cd\u542f" : "Reboot", ImVec2(button_width, 0)))
+            {
+                if (request_reboot_)
+                {
+                    request_reboot_();
+                }
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+        ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + viewport->Size.x * 0.5f,
+                                       viewport->Pos.y + viewport->Size.y * 0.5f),
+                                ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+        ImGui::SetNextWindowSize(ImVec2(320.0f, 0.0f), ImGuiCond_Always);
+        if (ImGui::BeginPopupModal("update_in_progress", nullptr,
+                                   ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar))
+        {
+            if (update_status_ && update_status_() != 1)
+            {
+                ImGui::CloseCurrentPopup();
+                ImGui::EndPopup();
+                // Popup will be closed next frame once update completes.
+            }
+            else
+            {
+            const char *msg = is_cn ? "\u6b63\u5728\u66f4\u65b0\uff0c\u8bf7\u7a0d\u5019..." : "Updating, please wait...";
+            ImGui::TextWrapped("%s", msg);
+            ImGui::EndPopup();
+            }
         }
     }
 

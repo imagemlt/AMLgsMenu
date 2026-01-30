@@ -17,6 +17,8 @@ public:
         int output_fps = 0;
         float hid_batt_percent = 0.0f;
         bool has_hid_batt = false;
+        int wifi_monitor_count = 0;
+        bool has_wifi_monitor = false;
         std::chrono::steady_clock::time_point timestamp = std::chrono::steady_clock::time_point::min();
     };
 

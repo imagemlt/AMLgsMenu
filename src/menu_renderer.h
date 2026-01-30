@@ -24,18 +24,32 @@ public:
         bool has_gps = false;
         bool has_battery = false;
         bool has_sky_temp = false;
+        bool has_speed = false;
         std::string flight_mode;
         double latitude = 0.0;
         double longitude = 0.0;
         float altitude_m = 0.0f;
+        int gps_satellites = -1;
+        float ground_speed_mps = 0.0f;
+        float air_speed_mps = 0.0f;
         float home_distance_m = 0.0f;
+    bool has_home_bearing = false;
+    float home_bearing_rel_deg = 0.0f;
+    bool has_rc = false;
+    float rc_left_x = 0.0f;
+    float rc_left_y = 0.0f;
+    float rc_right_x = 0.0f;
+    float rc_right_y = 0.0f;
         float bitrate_mbps = 0.0f;
         std::string video_resolution;
         int video_refresh_hz = 0;
         float cell_voltage = 0.0f;
         float pack_voltage = 0.0f;
+        bool cell_voltage_estimated = false;
         float sky_temp_c = 0.0f;
         float ground_temp_c = 0.0f;
+        bool has_wifi_monitor = false;
+        int wifi_monitor_count = 0;
         float roll_deg = 0.0f;
         float pitch_deg = 0.0f;
         float ground_batt_percent = 0.0f;
@@ -43,7 +57,10 @@ public:
     };
 
     MenuRenderer(MenuState &state, bool &use_mock, std::function<TelemetryData(TelemetryData)> provider,
-                 std::function<void()> toggle_terminal = {}, std::function<bool()> terminal_visible = {});
+                 std::function<void()> toggle_terminal = {}, std::function<bool()> terminal_visible = {},
+                 std::function<void(const std::string &)> start_update = {},
+                 std::function<int()> update_status = {},
+                 std::function<void()> request_reboot = {});
     ~MenuRenderer();
 
     void Render(bool &running_flag);
@@ -65,11 +82,15 @@ private:
     ImTextureID icon_batt_cell_{};
     ImTextureID icon_batt_pack_{};
     ImTextureID icon_gps_{};
+    ImTextureID icon_speed_{};
     ImTextureID icon_monitor_{};
     ImTextureID icon_temp_air_{};
     ImTextureID icon_temp_ground_{};
     std::function<void()> toggle_terminal_;
     std::function<bool()> terminal_visible_;
+    std::function<void(const std::string &)> start_update_;
+    std::function<int()> update_status_;
+    std::function<void()> request_reboot_;
     int pending_focus_index_ = -1;
     int last_focus_index_ = -1;
     std::array<std::vector<int>, 2> last_focus_columns_{};
@@ -82,4 +103,10 @@ private:
     std::string pending_high_refresh_label_;
     bool high_refresh_popup_pending_ = false;
     bool high_refresh_persist_popup_pending_ = false;
+    bool update_popup_pending_ = false;
+    bool update_missing_popup_pending_ = false;
+    bool update_failed_popup_pending_ = false;
+    bool update_reboot_popup_pending_ = false;
+    std::string update_path_;
+    int update_status_last_ = 0;
 };

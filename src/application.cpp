@@ -42,6 +42,26 @@ namespace
 {
 constexpr const char kDefaultStorageConfigPath[] = "/storage/digitalfpv/wfb.conf";
 constexpr const char kFlashConfigPath[] = "/flash/wfb.conf";
+
+std::string ShellEscape(const std::string &value)
+{
+    std::string out;
+    out.reserve(value.size() + 2);
+    out.push_back('\'');
+    for (char c : value)
+    {
+        if (c == '\'')
+        {
+            out.append("'\"'\"'");
+        }
+        else
+        {
+            out.push_back(c);
+        }
+    }
+    out.push_back('\'');
+    return out;
+}
 }
 
 Application::Application() = default;
@@ -64,6 +84,20 @@ namespace
             --end;
         }
         return text.substr(begin, end - begin);
+    }
+
+    float BearingDegrees(double lat1, double lon1, double lat2, double lon2)
+    {
+        const double rad = M_PI / 180.0;
+        double phi1 = lat1 * rad;
+        double phi2 = lat2 * rad;
+        double dlon = (lon2 - lon1) * rad;
+        double y = std::sin(dlon) * std::cos(phi2);
+        double x = std::cos(phi1) * std::sin(phi2) - std::sin(phi1) * std::cos(phi2) * std::cos(dlon);
+        double brng = std::atan2(y, x) * 180.0 / M_PI;
+        if (brng < 0.0)
+            brng += 360.0;
+        return static_cast<float>(brng);
     }
 
     MenuRenderer::TelemetryData ConvertTelemetry(const ParsedTelemetry &src, const MenuState &state)
@@ -103,13 +137,52 @@ namespace
             out.longitude = src.longitude;
             out.altitude_m = src.altitude_m;
             out.home_distance_m = src.home_distance_m;
+            out.gps_satellites = src.gps_satellites;
+        }
+        out.has_speed = src.has_speed;
+        if (src.has_speed)
+        {
+            out.ground_speed_mps = src.ground_speed_mps;
+            out.air_speed_mps = src.air_speed_mps;
+        }
+
+        out.has_home_bearing = false;
+        if (src.has_gps && src.has_home && src.has_attitude)
+        {
+            float bearing = BearingDegrees(src.latitude, src.longitude, src.home_latitude, src.home_longitude);
+            float rel = bearing - src.yaw_deg;
+            while (rel <= -180.0f)
+                rel += 360.0f;
+            while (rel > 180.0f)
+                rel -= 360.0f;
+            out.has_home_bearing = true;
+            out.home_bearing_rel_deg = rel;
+        }
+        out.has_rc = src.has_rc;
+        if (src.has_rc)
+        {
+            out.rc_left_x = src.rc_left_x;
+            out.rc_left_y = src.rc_left_y;
+            out.rc_right_x = src.rc_right_x;
+            out.rc_right_y = src.rc_right_y;
         }
 
         out.has_battery = src.has_battery;
         if (src.has_battery)
         {
             out.pack_voltage = src.batt_voltage_v;
-            if (src.cell_count > 0 && src.cell_voltage_v > 0.01f)
+            out.cell_voltage_estimated = false;
+            if (src.batt_voltage_v > 0.1f)
+            {
+                int est_cells = static_cast<int>(std::floor(src.batt_voltage_v / 4.3f)) + 1;
+                if (est_cells < 1)
+                    est_cells = 1;
+                if (est_cells > 12)
+                    est_cells = 12;
+                out.cell_voltage = src.batt_voltage_v / static_cast<float>(est_cells);
+                out.cell_voltage_estimated = true;
+            }
+            else if (src.cell_count > 0 && src.cell_voltage_v > 0.01f)
             {
                 out.cell_voltage = src.cell_voltage_v;
             }
@@ -282,6 +355,11 @@ bool Application::Initialize(const std::string &font_path, bool use_mock,
                     data.has_ground_batt = true;
                     data.ground_batt_percent = snap.hid_batt_percent;
                 }
+                if (snap.has_wifi_monitor)
+                {
+                    data.has_wifi_monitor = true;
+                    data.wifi_monitor_count = snap.wifi_monitor_count;
+                }
             }
             else
             {
@@ -295,11 +373,21 @@ bool Application::Initialize(const std::string &font_path, bool use_mock,
         provider = nullptr;
     }
 
-    renderer_ = std::make_unique<MenuRenderer>(*menu_state_, use_mock_, provider, [this]()
-                                               {
-        if (terminal_)
-            terminal_->toggleVisibility(); }, [this]()
-                                               { return terminal_ && terminal_->isTerminalVisible(); });
+    renderer_ = std::make_unique<MenuRenderer>(
+        *menu_state_, use_mock_, provider,
+        [this]()
+        {
+            if (terminal_)
+                terminal_->toggleVisibility();
+        },
+        [this]()
+        { return terminal_ && terminal_->isTerminalVisible(); },
+        [this](const std::string &path)
+        { StartFirmwareUpdate(path); },
+        [this]()
+        { return UpdateStatus(); },
+        [this]()
+        { RequestReboot(); });
     InitSplash();
 
     menu_state_->SetOnChangeCallback([this](MenuState::SettingType type)
@@ -911,6 +999,21 @@ void Application::ApplySoundVolume()
 
 void Application::ApplyBadFramePolicy()
 {
+    const char *key = (menu_state_->BadFrameIndex() == 0) ? "bad_frame_drop" : "bad_frame_ignore";
+    const std::string cmd = command_templates_.Render("local", key, {});
+    if (!cmd.empty())
+    {
+        if (cmd_runner_)
+        {
+            cmd_runner_->EnqueueShell(cmd);
+        }
+        else
+        {
+            std::system(cmd.c_str());
+        }
+        return;
+    }
+
     int value = (menu_state_->BadFrameIndex() == 0) ? 0 : 176;
     std::ofstream ofs("/sys/module/amvdec_h265/parameters/error_handle_policy");
     if (!ofs.is_open())
@@ -923,19 +1026,6 @@ void Application::ApplyBadFramePolicy()
     {
         std::fprintf(stderr, "[AMLgsMenu] Failed to set error_handle_policy=%d\n", value);
     }
-
-    if (value == 176)
-    {
-        std::system("echo 1 > /sys/module/amvdec_h265/parameters/hacked_lowlatency");
-        std::system("echo 0 > /sys/module/amvdec_h265/parameters/nal_skip_policy");
-        std::system("echo 0 > /sys/module/amvdec_h265/parameters/ref_frame_mark_flag");
-    }
-    else
-    {
-        std::system("echo 0 > /sys/module/amvdec_h265/parameters/hacked_lowlatency");
-        std::system("echo 2 > /sys/module/amvdec_h265/parameters/nal_skip_policy");
-        std::system("echo 1,1,1,1,1,1,1,1,1 > /sys/module/amvdec_h265/parameters/ref_frame_mark_flag");
-    }
 }
 
 void Application::ApplyAdaptiveLink()
@@ -947,6 +1037,69 @@ void Application::ApplyAdaptiveLink()
     else
     {
         std::system("systemctl disable alink");
+    }
+}
+
+void Application::StartFirmwareUpdate(const std::string &path)
+{
+    if (path.empty() || !cmd_runner_)
+    {
+        update_status_.store(3);
+        return;
+    }
+    if (update_status_.load() == 1)
+    {
+        return;
+    }
+    update_status_.store(1);
+    std::filesystem::path src(path);
+    std::filesystem::path parent = src.parent_path();
+    std::string parent_str = parent.string();
+    std::string remount_media;
+    if (!parent_str.empty() && parent_str.rfind("/media/", 0) == 0)
+    {
+        remount_media = " && mount -o remount,rw " + ShellEscape(parent_str);
+    }
+    std::string cmd =
+        "mount -o remount,rw /flash" + remount_media +
+        " && (bak=/tmp/wfb.conf.bak; "
+        "if [ -f /storage/digitalfpv/wfb.conf ]; then cp /storage/digitalfpv/wfb.conf $bak; "
+        "elif [ -f /flash/wfb.conf ]; then cp /flash/wfb.conf $bak; fi)" +
+        " && mv " + ShellEscape(path) + " /tmp/update_fpv.tar.gz" +
+        " && sleep 5" +
+        " && tar -zxv -f /tmp/update_fpv.tar.gz -C /" +
+        " && (cand=\"\"; "
+        "if [ -f /storage/digitalfpv/wfb.conf ]; then cand=/storage/digitalfpv/wfb.conf; "
+        "elif [ -f /wfb.conf ]; then cand=/wfb.conf; fi; "
+        "if [ -n \"$cand\" ]; then "
+        "mkdir -p /storage/digitalfpv; "
+        "if [ -f /tmp/wfb.conf.bak ]; then "
+        "awk -F= 'function trim(s){sub(/^[ \\t]+/,\"\",s); sub(/[ \\t]+$/,\"\",s); return s} "
+        "FNR==NR{if ($0 ~ /^[ \\t]*#/ || $0 ~ /^[ \\t]*$/) next; "
+        "if (NF>=2){key=trim($1); user[key]=$0; order[++n]=key;} next} "
+        "{if ($0 ~ /^[ \\t]*#/ || $0 ~ /^[ \\t]*$/){print; next} "
+        "if (NF>=2){key=trim($1); if (key in user){print user[key]; used[key]=1} else {print $0}; next} print} "
+        "END{for (i=1;i<=n;i++){key=order[i]; if (!(key in used)) print user[key]}}' "
+        "/tmp/wfb.conf.bak \"$cand\" > /tmp/wfb.conf.merged && "
+        "mv /tmp/wfb.conf.merged /storage/digitalfpv/wfb.conf; "
+        "else cp \"$cand\" /storage/digitalfpv/wfb.conf; fi; "
+        "if [ \"$cand\" = \"/wfb.conf\" ]; then rm -f /wfb.conf; fi; "
+        "fi)";
+    cmd_runner_->EnqueueRemote([this, cmd]()
+                               {
+        int rc = std::system(cmd.c_str());
+        update_status_.store(rc == 0 ? 2 : 3); });
+}
+
+void Application::RequestReboot()
+{
+    if (cmd_runner_)
+    {
+        cmd_runner_->EnqueueShell("reboot");
+    }
+    else
+    {
+        std::system("reboot");
     }
 }
 

@@ -17,6 +17,8 @@ struct ParsedTelemetry {
     bool has_radio_rssi = false;
     bool has_sky_temp = false;
     bool has_flight_mode = false;
+    bool has_speed = false;
+    bool has_rc = false;
     // optionals
     bool has_video_metrics = false;
     // data
@@ -26,6 +28,13 @@ struct ParsedTelemetry {
     double latitude = 0.0;
     double longitude = 0.0;
     float altitude_m = 0.0f;
+    int gps_satellites = -1;
+    float ground_speed_mps = 0.0f;
+    float air_speed_mps = 0.0f;
+    float rc_left_x = 0.0f;
+    float rc_left_y = 0.0f;
+    float rc_right_x = 0.0f;
+    float rc_right_y = 0.0f;
     double home_latitude = 0.0;
     double home_longitude = 0.0;
     float home_distance_m = 0.0f;

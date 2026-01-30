@@ -139,6 +139,9 @@ private:
     bool SendUdpControlCommand(uint16_t port, const char *payload, const char *tag);
     bool SendRecordingCommand(bool enable);
     bool SendSoundCommand(bool enable);
+    void StartFirmwareUpdate(const std::string &path);
+    int UpdateStatus() const { return update_status_.load(); }
+    void RequestReboot();
     void RebuildTransport(MenuState::FirmwareType type);
     std::shared_ptr<CommandTransport> AcquireTransport() const;
     void RestartRemoteSync();
@@ -191,6 +194,7 @@ private:
     std::string config_path_ = "/storage/digitalfpv/wfb.conf";
     std::atomic<bool> remote_sync_request_flag_{false};
     std::atomic<bool> remote_sync_inflight_{false};
+    std::atomic<int> update_status_{0};
     std::mutex remote_state_mutex_;
     RemoteStateSnapshot pending_remote_state_{};
     bool remote_sync_ready_ = false;

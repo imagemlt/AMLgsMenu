@@ -115,6 +115,7 @@ void MavlinkReceiver::HandleMessage(const mavlink_message_t &msg) {
         telem_.latitude = mavlink_msg_gps_raw_int_get_lat(&msg) / 1e7;
         telem_.longitude = mavlink_msg_gps_raw_int_get_lon(&msg) / 1e7;
         telem_.altitude_m = mavlink_msg_gps_raw_int_get_alt(&msg) / 1000.0f;
+        telem_.gps_satellites = static_cast<int>(mavlink_msg_gps_raw_int_get_satellites_visible(&msg));
         telem_.has_gps = true;
         UpdateHomeDistanceLocked();
         break;
@@ -124,6 +125,31 @@ void MavlinkReceiver::HandleMessage(const mavlink_message_t &msg) {
         telem_.home_longitude = mavlink_msg_home_position_get_longitude(&msg) / 1e7;
         telem_.has_home = true;
         UpdateHomeDistanceLocked();
+        break;
+    }
+    case MAVLINK_MSG_ID_VFR_HUD: {
+        telem_.ground_speed_mps = mavlink_msg_vfr_hud_get_groundspeed(&msg);
+        telem_.air_speed_mps = mavlink_msg_vfr_hud_get_airspeed(&msg);
+        telem_.has_speed = true;
+        break;
+    }
+    case MAVLINK_MSG_ID_RC_CHANNELS: {
+        mavlink_rc_channels_t rc{};
+        mavlink_msg_rc_channels_decode(&msg, &rc);
+        auto norm_axis = [](uint16_t v) {
+            if (v == 0) {
+                return 0.0f;
+            }
+            float out = (static_cast<float>(v) - 1500.0f) / 500.0f;
+            if (out > 1.0f) out = 1.0f;
+            if (out < -1.0f) out = -1.0f;
+            return out;
+        };
+        telem_.rc_right_x = norm_axis(rc.chan1_raw);
+        telem_.rc_right_y = norm_axis(rc.chan2_raw);
+        telem_.rc_left_y = norm_axis(rc.chan3_raw);
+        telem_.rc_left_x = norm_axis(rc.chan4_raw);
+        telem_.has_rc = true;
         break;
     }
     case MAVLINK_MSG_ID_RC_CHANNELS_RAW: {

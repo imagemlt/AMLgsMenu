@@ -27,6 +27,7 @@ constexpr std::chrono::seconds kSignalInterval{2};
 constexpr std::chrono::seconds kTempInterval{1};
 constexpr std::chrono::seconds kFpsInterval{1};
 constexpr std::chrono::seconds kHidBatteryInterval{2};
+constexpr std::chrono::seconds kWifiInterval{10};
 constexpr uint16_t kCemianVendorId = 0x1209;
 constexpr uint16_t kCemianProductId = 0xC55D;
 constexpr size_t kCemianBatteryIndex = 6;
@@ -145,6 +146,23 @@ std::optional<float> QueryHidBatteryPercent()
             fallback = pct;
     }
     return fallback;
+}
+
+int GetMonitorCount()
+{
+    FILE *fp = popen("iw dev 2>/dev/null", "r");
+    if (!fp) {
+        return -1;
+    }
+    int count = 0;
+    char buf[256];
+    while (std::fgets(buf, sizeof(buf), fp)) {
+        if (std::strstr(buf, "type monitor")) {
+            ++count;
+        }
+    }
+    pclose(fp);
+    return count;
 }
 
 struct HidBatteryField
@@ -687,6 +705,7 @@ void TelemetryWorker::ThreadMain() {
     auto last_temp = std::chrono::steady_clock::time_point{};
     auto last_fps = std::chrono::steady_clock::time_point{};
     auto last_hid_batt = std::chrono::steady_clock::time_point{};
+    auto last_wifi = std::chrono::steady_clock::time_point{};
 
     std::fprintf(stderr, "[Telemetry] worker thread start\n");
 
@@ -743,6 +762,19 @@ void TelemetryWorker::ThreadMain() {
                 }
             }
             last_hid_batt = now;
+            updated = true;
+        }
+
+        if (last_wifi.time_since_epoch().count() == 0 ||
+            (now - last_wifi) >= kWifiInterval) {
+            int count = GetMonitorCount();
+            if (count >= 0) {
+                snap.wifi_monitor_count = count;
+                snap.has_wifi_monitor = true;
+            } else {
+                snap.has_wifi_monitor = false;
+            }
+            last_wifi = now;
             updated = true;
         }
 
