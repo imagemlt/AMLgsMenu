@@ -348,19 +348,19 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
             return ImVec2(p.x * cosr - p.y * sinr, p.x * sinr + p.y * cosr);
         };
         const float pitch_offset = pitch_deg * 2.0f; // pixels per degree, tweak as needed
+        const ImU32 tick_outline = IM_COL32(255, 255, 255, 220);
         ImVec2 p1 = rotate(left);
         ImVec2 p2 = rotate(right);
         p1.x += center.x;
         p2.x += center.x;
         p1.y += center.y + pitch_offset;
         p2.y += center.y + pitch_offset;
-        draw_list->AddLine(p1, p2, IM_COL32(0, 0, 0, 235), 4.6f);
         draw_list->AddLine(p1, p2, IM_COL32(255, 255, 255, 255), 2.6f);
 
         // Pitch ladder ticks (screen-aligned, fixed on screen)
         ImVec2 zero_l(center.x - tick_gap, center.y);
         ImVec2 zero_r(center.x + tick_gap, center.y);
-        draw_list->AddLine(zero_l, zero_r, IM_COL32(0, 0, 0, 180), 2.2f);
+        draw_list->AddLine(zero_l, zero_r, tick_outline, 2.2f);
         draw_list->AddLine(zero_l, zero_r, IM_COL32(255, 255, 255, 140), 1.2f);
         for (int i = 1; i <= tick_count; ++i)
         {
@@ -372,8 +372,8 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
             ImVec2 up_l2(center.x - tick_gap + tick_half_len, y_up);
             ImVec2 up_r1(center.x + tick_gap - tick_half_len, y_up);
             ImVec2 up_r2(center.x + tick_gap + tick_half_len, y_up);
-            draw_list->AddLine(up_l1, up_l2, IM_COL32(0, 0, 0, 180), 2.6f);
-            draw_list->AddLine(up_r1, up_r2, IM_COL32(0, 0, 0, 180), 2.6f);
+            draw_list->AddLine(up_l1, up_l2, tick_outline, 2.6f);
+            draw_list->AddLine(up_r1, up_r2, tick_outline, 2.6f);
             draw_list->AddLine(up_l1, up_l2, IM_COL32(255, 255, 255, 200), 1.6f);
             draw_list->AddLine(up_r1, up_r2, IM_COL32(255, 255, 255, 200), 1.6f);
 
@@ -381,8 +381,8 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
             ImVec2 dn_l2(center.x - tick_gap + tick_half_len, y_dn);
             ImVec2 dn_r1(center.x + tick_gap - tick_half_len, y_dn);
             ImVec2 dn_r2(center.x + tick_gap + tick_half_len, y_dn);
-            draw_list->AddLine(dn_l1, dn_l2, IM_COL32(0, 0, 0, 180), 2.6f);
-            draw_list->AddLine(dn_r1, dn_r2, IM_COL32(0, 0, 0, 180), 2.6f);
+            draw_list->AddLine(dn_l1, dn_l2, tick_outline, 2.6f);
+            draw_list->AddLine(dn_r1, dn_r2, tick_outline, 2.6f);
             draw_list->AddLine(dn_l1, dn_l2, IM_COL32(255, 255, 255, 200), 1.6f);
             draw_list->AddLine(dn_r1, dn_r2, IM_COL32(255, 255, 255, 200), 1.6f);
         }
@@ -556,13 +556,18 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
             icon_text_line(home_buf, icon_gps_);
             if (data.has_home_bearing)
             {
-                ImVec2 text_max = ImGui::GetItemRectMax();
-                const float arrow_shift = ImGui::CalcTextSize("000000").x;
-                ImVec2 arrow_center(text_max.x + 32.0f + arrow_shift, text_max.y - icon_size * 0.5f + 2.0f);
+                ImVec2 line_start = ImGui::GetItemRectMin();
+                ImVec2 line_end = ImGui::GetItemRectMax();
+                const char *home_label = is_cn ? "回家方向" : "HOME DIRCT";
+                ImVec2 label_size = ImGui::CalcTextSize(home_label);
+                ImVec2 label_pos(line_end.x + 8.0f, line_start.y);
+                draw_text_outline(ImGui::GetFont(), ImGui::GetFontSize(), label_pos, text_fill, text_outline, home_label);
+                float size = 21.0f;
+                ImVec2 arrow_center(label_pos.x + label_size.x + size + 8.0f,
+                                    line_start.y + icon_size * 0.5f);
                 float rel_rad = data.home_bearing_rel_deg * 3.1415926f / 180.0f;
                 ImVec2 dir(std::sin(rel_rad), -std::cos(rel_rad));
                 ImVec2 side(-dir.y, dir.x);
-                float size = 21.0f;
                 ImVec2 tip = ImVec2(arrow_center.x + dir.x * size, arrow_center.y + dir.y * size);
                 ImVec2 left = ImVec2(arrow_center.x - dir.x * size * 0.6f + side.x * size * 0.6f,
                                      arrow_center.y - dir.y * size * 0.6f + side.y * size * 0.6f);
@@ -570,11 +575,6 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
                                       arrow_center.y - dir.y * size * 0.6f - side.y * size * 0.6f);
                 draw_list->AddTriangleFilled(tip, left, right, IM_COL32(255, 255, 255, 220));
                 draw_list->AddTriangle(tip, left, right, IM_COL32(0, 0, 0, 180), 1.5f);
-                const char *home_label = is_cn ? "回家方向" : "HOME DIRCT";
-                ImVec2 label_size = ImGui::CalcTextSize(home_label);
-                ImVec2 label_pos(arrow_center.x - size - label_size.x - 14.0f,
-                                 arrow_center.y - label_size.y * 0.5f);
-                draw_text_outline(ImGui::GetFont(), ImGui::GetFontSize(), label_pos, text_fill, text_outline, home_label);
             }
             ImGui::PopStyleColor();
         }
@@ -686,9 +686,14 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
 
 void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
 {
-    const ImVec2 menu_size = ImVec2(viewport->Size.x * 0.54f, viewport->Size.y * 0.65f);
+    const float base_font_size = 26.0f;
+    const float font_scale = ImGui::GetFontSize() / base_font_size;
+    const float menu_height_scale = std::min(1.15f, std::max(1.0f, font_scale));
+    const float menu_height_ratio = 0.70f + (menu_height_scale - 1.0f) * 0.45f;
+    const ImVec2 menu_size = ImVec2(viewport->Size.x * 0.54f, viewport->Size.y * menu_height_ratio);
+    const float menu_pos_y_ratio = std::max(0.10f, 0.16f - (menu_height_ratio - 0.70f) * 0.5f);
     const ImVec2 menu_pos = ImVec2(viewport->Pos.x + viewport->Size.x * 0.23f,
-                                   viewport->Pos.y + viewport->Size.y * 0.20f);
+                                   viewport->Pos.y + viewport->Size.y * menu_pos_y_ratio);
     const bool is_cn = state_.GetLanguage() == MenuState::Language::CN;
     bool kodi_popup_requested = false;
 
@@ -944,7 +949,6 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
                              ImGui::EndCombo();
                          } }); });
 
-            /*
             const auto &volume_levels = state_.VolumeLevels();
             row_pair(is_cn ? "\u58f0\u97f3\u5f00\u5173" : "Sound", [&]
                      { register_focus(0, [&]
@@ -984,7 +988,6 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
                              ImGui::EndCombo();
                          } });
                      });
-            */
 
             row_pair(is_cn ? "\u81ea\u9002\u5e94\u94fe\u8def" : "Adaptive Link", [&]
                      {

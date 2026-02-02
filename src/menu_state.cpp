@@ -10,7 +10,7 @@ MenuState::MenuState(std::vector<VideoMode> sky_modes, std::vector<VideoMode> gr
       bitrates_(BuildRange(1, 50)),
       power_levels_(BuildRange(1, 60)),
       mcs_levels_(BuildRange(0, 12)),
-      volume_levels_({10, 20, 30, 40, 50, 60, 70, 80, 90, 100}),
+      volume_levels_({0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100}),
       buffer_levels_(BuildRange(1, 64)),
       sky_modes_(std::move(sky_modes)),
       ground_modes_(std::move(ground_modes))

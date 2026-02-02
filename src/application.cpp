@@ -257,9 +257,12 @@ bool Application::Initialize(const std::string &font_path, bool use_mock,
     io.MouseDrawCursor = false;
 
     const float base_size = 26.0f; // larger base size for readability
+    const bool is_zc0005 = (!font_path.empty() &&
+                            font_path.find("ZC0005-Regular-2.ttf") != std::string::npos);
+    const float ui_size = is_zc0005 ? base_size : (base_size * 1.2f);
     if (!font_path.empty())
     {
-        ui_font_ = io.Fonts->AddFontFromFileTTF(font_path.c_str(), base_size);
+        ui_font_ = io.Fonts->AddFontFromFileTTF(font_path.c_str(), ui_size);
     }
     else
     {
@@ -272,6 +275,10 @@ bool Application::Initialize(const std::string &font_path, bool use_mock,
     if (!terminal_font_path.empty())
     {
         terminal_font_ = io.Fonts->AddFontFromFileTTF(terminal_font_path.c_str(), base_size);
+    }
+    else if (!font_path.empty())
+    {
+        terminal_font_ = io.Fonts->AddFontFromFileTTF(font_path.c_str(), base_size);
     }
     if (!terminal_font_)
     {
@@ -439,7 +446,6 @@ bool Application::Initialize(const std::string &font_path, bool use_mock,
         case MenuState::SettingType::SkyPower:
             ApplySkyPower();
             break;
-        /*
         case MenuState::SettingType::SoundEnable:
             SaveConfigValue("sound", menu_state_->SoundEnabled() ? "1" : "0");
             ApplySoundEnabled();
@@ -456,7 +462,6 @@ bool Application::Initialize(const std::string &font_path, bool use_mock,
             }
             break;
         }
-        */
         case MenuState::SettingType::BufferLevel: {
             const auto &levels = menu_state_->BufferLevels();
             if (!levels.empty())

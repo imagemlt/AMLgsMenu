@@ -27,6 +27,7 @@ bool SshCommandClient::SendWithReply(const std::string &cmd,
 bool SshCommandClient::Execute(const std::string &cmd, std::vector<std::string> *response,
                                int timeout_ms) {
     std::lock_guard<std::mutex> lock(mutex_);
+    const int effective_timeout_ms = std::max(timeout_ms, 10000);
     ssh_session session = ssh_new();
     if (!session) {
         std::fprintf(stderr, "[AMLgsMenu] ssh_new failed\n");
@@ -37,8 +38,8 @@ bool SshCommandClient::Execute(const std::string &cmd, std::vector<std::string> 
     ssh_options_set(session, SSH_OPTIONS_USER, user_.c_str());
     int strict_host = 0;
     ssh_options_set(session, SSH_OPTIONS_STRICTHOSTKEYCHECK, &strict_host);
-    if (timeout_ms > 0) {
-        long sec = std::max(1, timeout_ms / 1000);
+    if (effective_timeout_ms > 0) {
+        long sec = std::max(1, effective_timeout_ms / 1000);
         ssh_options_set(session, SSH_OPTIONS_TIMEOUT, &sec);
     }
     int rc = ssh_connect(session);
@@ -83,7 +84,7 @@ bool SshCommandClient::Execute(const std::string &cmd, std::vector<std::string> 
     std::string collected;
     char buffer[512];
     while (true) {
-        rc = ssh_channel_read_timeout(channel, buffer, sizeof(buffer), 0, timeout_ms);
+        rc = ssh_channel_read_timeout(channel, buffer, sizeof(buffer), 0, effective_timeout_ms);
         if (rc == SSH_ERROR) {
             std::fprintf(stderr, "[AMLgsMenu] ssh_channel_read failed: %s\n", ssh_get_error(session));
             break;
