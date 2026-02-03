@@ -2635,6 +2635,47 @@ bool Application::CollectRemoteState(RemoteStateSnapshot &snapshot,
     {
         return false;
     }
+    auto query_batch = [&](const std::vector<std::string> &keys,
+                           std::unordered_map<std::string, std::string> &out) -> bool
+    {
+        out.clear();
+        std::string batch_cmd;
+        for (const auto &key : keys)
+        {
+            auto cmd = command_templates_.Render("remote_query", key, {});
+            if (cmd.empty())
+                continue;
+            if (!batch_cmd.empty())
+                batch_cmd.append(" ; ");
+            batch_cmd.append("echo __key__");
+            batch_cmd.append(key);
+            batch_cmd.append(" ; ");
+            batch_cmd.append(cmd);
+        }
+        if (batch_cmd.empty())
+            return false;
+        std::vector<std::string> response;
+        if (!transport->SendWithReply(batch_cmd, response, 1500))
+            return false;
+        std::string current_key;
+        for (const auto &line : response)
+        {
+            auto trimmed = TrimCopy(line);
+            if (trimmed.empty() || trimmed == "timeout")
+                continue;
+            if (trimmed.rfind("__key__", 0) == 0)
+            {
+                current_key = trimmed.substr(7);
+                continue;
+            }
+            if (!current_key.empty() && out.find(current_key) == out.end())
+            {
+                out[current_key] = trimmed;
+            }
+        }
+        return !out.empty();
+    };
+
     auto try_parse_int = [](const std::string &text, int &value) -> bool
     {
         try
@@ -2649,9 +2690,17 @@ bool Application::CollectRemoteState(RemoteStateSnapshot &snapshot,
     };
 
     bool any = false;
+    std::unordered_map<std::string, std::string> batch_values;
+    const std::vector<std::string> keys = {"channel", "bandwidth", "sky_power", "sky_mcs",
+                                           "bitrate", "sky_size", "sky_fps"};
+    const bool have_batch = query_batch(keys, batch_values);
+    if (!have_batch)
+        return false;
+
     std::string value;
-    if (QueryRemoteValue("channel", value, transport))
+    if (!batch_values["channel"].empty())
     {
+        value = batch_values["channel"];
         int ch = 0;
         if (try_parse_int(value, ch))
         {
@@ -2660,8 +2709,9 @@ bool Application::CollectRemoteState(RemoteStateSnapshot &snapshot,
             any = true;
         }
     }
-    if (QueryRemoteValue("bandwidth", value, transport))
+    if (!batch_values["bandwidth"].empty())
     {
+        value = batch_values["bandwidth"];
         int bw = 0;
         if (try_parse_int(value, bw))
         {
@@ -2670,8 +2720,9 @@ bool Application::CollectRemoteState(RemoteStateSnapshot &snapshot,
             any = true;
         }
     }
-    if (QueryRemoteValue("sky_power", value, transport))
+    if (!batch_values["sky_power"].empty())
     {
+        value = batch_values["sky_power"];
         int p = 0;
         if (try_parse_int(value, p))
         {
@@ -2680,8 +2731,9 @@ bool Application::CollectRemoteState(RemoteStateSnapshot &snapshot,
             any = true;
         }
     }
-    if (QueryRemoteValue("sky_mcs", value, transport))
+    if (!batch_values["sky_mcs"].empty())
     {
+        value = batch_values["sky_mcs"];
         int mcs = 0;
         if (try_parse_int(value, mcs))
         {
@@ -2690,8 +2742,9 @@ bool Application::CollectRemoteState(RemoteStateSnapshot &snapshot,
             any = true;
         }
     }
-    if (QueryRemoteValue("bitrate", value, transport))
+    if (!batch_values["bitrate"].empty())
     {
+        value = batch_values["bitrate"];
         int kbps = 0;
         if (try_parse_int(value, kbps))
         {
@@ -2702,8 +2755,20 @@ bool Application::CollectRemoteState(RemoteStateSnapshot &snapshot,
     }
     std::string size_value;
     std::string fps_value;
-    bool have_size = QueryRemoteValue("sky_size", size_value, transport);
-    bool have_fps = QueryRemoteValue("sky_fps", fps_value, transport);
+    bool have_size = false;
+    bool have_fps = false;
+    auto it_size = batch_values.find("sky_size");
+    if (it_size != batch_values.end())
+    {
+        size_value = it_size->second;
+        have_size = !size_value.empty();
+    }
+    auto it_fps = batch_values.find("sky_fps");
+    if (it_fps != batch_values.end())
+    {
+        fps_value = it_fps->second;
+        have_fps = !fps_value.empty();
+    }
     if (have_size && have_fps)
     {
         int width = 0;
@@ -2725,6 +2790,8 @@ void Application::ApplyRemoteStateSnapshot(const RemoteStateSnapshot &snapshot)
 {
     if (!menu_state_)
         return;
+    const bool notify_prev = menu_state_->NotifyEnabled();
+    menu_state_->SetNotifyEnabled(false);
     if (snapshot.has_channel)
     {
         int idx = FindChannelIndex(snapshot.channel);
@@ -2793,6 +2860,7 @@ void Application::ApplyRemoteStateSnapshot(const RemoteStateSnapshot &snapshot)
                          snapshot.width, snapshot.height, snapshot.fps);
         }
     }
+    menu_state_->SetNotifyEnabled(notify_prev);
 }
 
 bool Application::QueryRemoteValue(const std::string &key, std::string &out,

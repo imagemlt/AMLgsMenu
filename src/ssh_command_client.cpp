@@ -27,6 +27,8 @@ bool SshCommandClient::SendWithReply(const std::string &cmd,
 bool SshCommandClient::Execute(const std::string &cmd, std::vector<std::string> *response,
                                int timeout_ms) {
     std::lock_guard<std::mutex> lock(mutex_);
+    std::fprintf(stdout, "[AMLgsMenu] ssh exec: %s\n", cmd.c_str());
+    std::fflush(stdout);
     const int effective_timeout_ms = std::max(timeout_ms, 10000);
     ssh_session session = ssh_new();
     if (!session) {
@@ -108,6 +110,12 @@ bool SshCommandClient::Execute(const std::string &cmd, std::vector<std::string> 
 
     if (response) {
         SplitLines(collected, *response);
+        for (const auto &line : *response) {
+            if (!line.empty()) {
+                std::fprintf(stdout, "[AMLgsMenu] ssh resp: %s\n", line.c_str());
+            }
+        }
+        std::fflush(stdout);
     }
     return true;
 }

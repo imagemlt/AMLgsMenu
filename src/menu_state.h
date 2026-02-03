@@ -76,6 +76,8 @@ public:
     bool Recording() const { return recording_; }
     bool SoundEnabled() const { return sound_enabled_; }
     bool ShouldExit() const { return should_exit_; }
+    void SetNotifyEnabled(bool enabled) { notify_enabled_ = enabled; }
+    bool NotifyEnabled() const { return notify_enabled_; }
 
     void SetChannelIndex(int index);
     void SetBandwidthIndex(int index);
@@ -155,4 +157,5 @@ private:
     bool force_ground_mode_notify_once_ = false;
     bool experimental_ground_persisted_ = false;
     std::unordered_set<std::string> persisted_ground_modes_;
+    bool notify_enabled_ = true;
 };

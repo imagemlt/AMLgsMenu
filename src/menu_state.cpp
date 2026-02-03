@@ -50,7 +50,7 @@ std::vector<int> MenuState::BuildRange(int start, int end)
 
 void MenuState::NotifyChange(SettingType type) const
 {
-    if (on_change_callback_)
+    if (notify_enabled_ && on_change_callback_)
     {
         on_change_callback_(type);
     }
