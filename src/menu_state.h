@@ -26,6 +26,7 @@ public:
         SoundEnable,
         SoundVolume,
         BufferLevel,
+        HdmiAttr,
         BadFramePolicy,
         AdaptiveLink,
         Recording,
@@ -57,6 +58,7 @@ public:
     const std::vector<int> &McsLevels() const { return mcs_levels_; }
     const std::vector<int> &VolumeLevels() const { return volume_levels_; }
     const std::vector<int> &BufferLevels() const { return buffer_levels_; }
+    const std::vector<std::string> &HdmiAttrs() const { return hdmi_attrs_; }
     bool MenuVisible() const { return menu_visible_; }
 
     int ChannelIndex() const { return channel_index_; }
@@ -69,6 +71,7 @@ public:
     int GroundPowerIndex() const { return ground_power_index_; }
     int SoundVolumeIndex() const { return sound_volume_index_; }
     int BufferLevelIndex() const { return buffer_level_index_; }
+    int HdmiAttrIndex() const { return hdmi_attr_index_; }
     int BadFrameIndex() const { return bad_frame_index_; }
     bool AdaptiveLinkEnabled() const { return adaptive_link_enabled_; }
     Language GetLanguage() const { return language_; }
@@ -90,6 +93,7 @@ public:
     void SetSoundEnabled(bool enabled);
     void SetSoundVolumeIndex(int index);
     void SetBufferLevelIndex(int index);
+    void SetHdmiAttrIndex(int index);
     void SetBadFrameIndex(int index);
     void SetAdaptiveLinkEnabled(bool enabled);
     void SetLanguage(Language lang);
@@ -111,6 +115,11 @@ public:
     void RequestGroundModeForceSaveOnce();
     bool ConsumeGroundModeForceSaveOnce();
     void ForceGroundModeNotifyOnce();
+    void RequestHdmiAttrSkipSaveOnce();
+    bool ConsumeHdmiAttrSkipSaveOnce();
+    void RequestHdmiAttrForceSaveOnce();
+    bool ConsumeHdmiAttrForceSaveOnce();
+    void ForceHdmiAttrNotifyOnce();
     bool ExperimentalGroundPersisted() const { return experimental_ground_persisted_; }
     void SetExperimentalGroundPersisted(bool value) { experimental_ground_persisted_ = value; }
     bool IsGroundModePersisted(const std::string &label) const;
@@ -126,6 +135,7 @@ private:
     std::vector<int> mcs_levels_;
     std::vector<int> volume_levels_;
     std::vector<int> buffer_levels_;
+    std::vector<std::string> hdmi_attrs_;
     std::vector<VideoMode> sky_modes_;
     std::vector<VideoMode> ground_modes_;
     std::array<const char *, 3> bandwidths_{{"10 MHz", "20 MHz", "40 MHz"}};
@@ -143,6 +153,7 @@ private:
     int ground_power_index_ = 0;
     int sound_volume_index_ = 9;
     int buffer_level_index_ = 0;
+    int hdmi_attr_index_ = 0;
     int bad_frame_index_ = 1;
     bool adaptive_link_enabled_ = false;
     Language language_ = Language::CN;
@@ -155,6 +166,9 @@ private:
     bool ground_mode_skip_save_once_ = false;
     bool ground_mode_force_save_once_ = false;
     bool force_ground_mode_notify_once_ = false;
+    bool hdmi_attr_skip_save_once_ = false;
+    bool hdmi_attr_force_save_once_ = false;
+    bool force_hdmi_attr_notify_once_ = false;
     bool experimental_ground_persisted_ = false;
     std::unordered_set<std::string> persisted_ground_modes_;
     bool notify_enabled_ = true;

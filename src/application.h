@@ -40,6 +40,7 @@ struct JoystickDevice
 };
 
 struct ImFont;
+class UdpCommandClient;
 
 class Application
 {
@@ -117,8 +118,11 @@ private:
     void StartRemoteSync();
     void DrainRemoteState();
     void ApplyRemoteStateSnapshot(const RemoteStateSnapshot &snapshot);
+    bool FillRemoteSnapshotFromMap(const std::unordered_map<std::string, std::string> &values,
+                                   RemoteStateSnapshot &snapshot);
     bool CollectRemoteState(RemoteStateSnapshot &snapshot,
                             const std::shared_ptr<CommandTransport> &transport);
+    bool CollectRemoteStateAsync(const std::shared_ptr<UdpCommandClient> &transport);
     bool QueryRemoteValue(const std::string &key, std::string &out,
                           const std::shared_ptr<CommandTransport> &transport);
     void ApplyLanguageToImGui(MenuState::Language lang);

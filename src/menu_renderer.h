@@ -103,6 +103,10 @@ private:
     std::string pending_high_refresh_label_;
     bool high_refresh_popup_pending_ = false;
     bool high_refresh_persist_popup_pending_ = false;
+    int pending_hdmi_attr_index_ = -1;
+    std::string pending_hdmi_attr_value_;
+    bool hdmi_attr_popup_pending_ = false;
+    bool hdmi_attr_persist_popup_pending_ = false;
     bool update_popup_pending_ = false;
     bool update_missing_popup_pending_ = false;
     bool update_failed_popup_pending_ = false;

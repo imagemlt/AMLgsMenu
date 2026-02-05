@@ -481,6 +481,33 @@ bool Application::Initialize(const std::string &font_path, bool use_mock,
             }
             break;
         }
+        case MenuState::SettingType::HdmiAttr: {
+            const auto &attrs = menu_state_->HdmiAttrs();
+            if (!attrs.empty())
+            {
+                int idx = menu_state_->HdmiAttrIndex();
+                if (idx < 0 || idx >= static_cast<int>(attrs.size()))
+                    idx = 0;
+                const std::string value = attrs[idx];
+                bool skip_once = menu_state_->ConsumeHdmiAttrSkipSaveOnce();
+                bool force_save_once = menu_state_->ConsumeHdmiAttrForceSaveOnce();
+                const bool should_save = !skip_once || force_save_once;
+                if (should_save)
+                {
+                    SaveConfigValue("hdmi_attr", value);
+                }
+                const std::string cmd = "echo " + value + " > /sys/class/amhdmitx/amhdmitx0/attr";
+                if (cmd_runner_)
+                {
+                    cmd_runner_->EnqueueShell(cmd);
+                }
+                else
+                {
+                    std::system(cmd.c_str());
+                }
+            }
+            break;
+        }
         case MenuState::SettingType::BadFramePolicy: {
             int value = (menu_state_->BadFrameIndex() == 0) ? 0 : 176;
             SaveConfigValue("bad_frame", std::to_string(value));
@@ -2479,6 +2506,33 @@ void Application::LoadConfig()
         config_kv_["buf_level"] = std::to_string(buffer_levels[idx]);
     }
 
+    const auto &hdmi_attrs = menu_state_->HdmiAttrs();
+    if (!hdmi_attrs.empty())
+    {
+        std::string value = "rgb";
+        auto it_hdmi = config_kv_.find("hdmi_attr");
+        if (it_hdmi != config_kv_.end())
+        {
+            value = it_hdmi->second;
+        }
+        int idx = 0;
+        for (int i = 0; i < static_cast<int>(hdmi_attrs.size()); ++i)
+        {
+            if (hdmi_attrs[i] == value)
+            {
+                idx = i;
+                break;
+            }
+        }
+        if (idx < 0 || idx >= static_cast<int>(hdmi_attrs.size()))
+        {
+            idx = 2 < static_cast<int>(hdmi_attrs.size()) ? 2 : 0;
+            value = hdmi_attrs[idx];
+        }
+        menu_state_->SetHdmiAttrIndex(idx);
+        config_kv_["hdmi_attr"] = value;
+    }
+
     auto it_bad = config_kv_.find("bad_frame");
     if (it_bad != config_kv_.end())
     {
@@ -2584,12 +2638,20 @@ void Application::MaybeLaunchRemoteSyncJob()
     remote_sync_request_flag_.store(false, std::memory_order_release);
     cmd_runner_->EnqueueRemote([this, transport]()
                                {
+        if (auto udp = std::dynamic_pointer_cast<UdpCommandClient>(transport))
+        {
+            if (CollectRemoteStateAsync(udp))
+            {
+                return;
+            }
+        }
+
         RemoteStateSnapshot snapshot{};
         if (CollectRemoteState(snapshot, transport))
         {
             std::lock_guard<std::mutex> lock(remote_state_mutex_);
             pending_remote_state_ = snapshot;
-        remote_sync_ready_ = true;
+            remote_sync_ready_ = true;
         }
         remote_sync_inflight_.store(false, std::memory_order_release);
         MaybeLaunchRemoteSyncJob(); });
@@ -2628,54 +2690,9 @@ void Application::DrainRemoteState()
 
 }
 
-bool Application::CollectRemoteState(RemoteStateSnapshot &snapshot,
-                                     const std::shared_ptr<CommandTransport> &transport)
+bool Application::FillRemoteSnapshotFromMap(const std::unordered_map<std::string, std::string> &values,
+                                            RemoteStateSnapshot &snapshot)
 {
-    if (!transport)
-    {
-        return false;
-    }
-    auto query_batch = [&](const std::vector<std::string> &keys,
-                           std::unordered_map<std::string, std::string> &out) -> bool
-    {
-        out.clear();
-        std::string batch_cmd;
-        for (const auto &key : keys)
-        {
-            auto cmd = command_templates_.Render("remote_query", key, {});
-            if (cmd.empty())
-                continue;
-            if (!batch_cmd.empty())
-                batch_cmd.append(" ; ");
-            batch_cmd.append("echo __key__");
-            batch_cmd.append(key);
-            batch_cmd.append(" ; ");
-            batch_cmd.append(cmd);
-        }
-        if (batch_cmd.empty())
-            return false;
-        std::vector<std::string> response;
-        if (!transport->SendWithReply(batch_cmd, response, 1500))
-            return false;
-        std::string current_key;
-        for (const auto &line : response)
-        {
-            auto trimmed = TrimCopy(line);
-            if (trimmed.empty() || trimmed == "timeout")
-                continue;
-            if (trimmed.rfind("__key__", 0) == 0)
-            {
-                current_key = trimmed.substr(7);
-                continue;
-            }
-            if (!current_key.empty() && out.find(current_key) == out.end())
-            {
-                out[current_key] = trimmed;
-            }
-        }
-        return !out.empty();
-    };
-
     auto try_parse_int = [](const std::string &text, int &value) -> bool
     {
         try
@@ -2690,12 +2707,7 @@ bool Application::CollectRemoteState(RemoteStateSnapshot &snapshot,
     };
 
     bool any = false;
-    std::unordered_map<std::string, std::string> batch_values;
-    const std::vector<std::string> keys = {"channel", "bandwidth", "sky_power", "sky_mcs",
-                                           "bitrate", "sky_size", "sky_fps"};
-    const bool have_batch = query_batch(keys, batch_values);
-    if (!have_batch)
-        return false;
+    auto batch_values = values;
 
     std::string value;
     if (!batch_values["channel"].empty())
@@ -2786,6 +2798,97 @@ bool Application::CollectRemoteState(RemoteStateSnapshot &snapshot,
     return any;
 }
 
+bool Application::CollectRemoteState(RemoteStateSnapshot &snapshot,
+                                     const std::shared_ptr<CommandTransport> &transport)
+{
+    if (!transport)
+    {
+        return false;
+    }
+    std::unordered_map<std::string, std::string> batch_values;
+    std::string batch_cmd;
+    const std::vector<std::string> keys = {"channel", "bandwidth", "sky_power", "sky_mcs",
+                                           "bitrate", "sky_size", "sky_fps"};
+    for (const auto &key : keys)
+    {
+        auto cmd = command_templates_.Render("remote_query", key, {});
+        if (cmd.empty())
+            continue;
+        if (!batch_cmd.empty())
+            batch_cmd.append(" ; ");
+        batch_cmd.append("echo __key__");
+        batch_cmd.append(key);
+        batch_cmd.append(" ; ");
+        batch_cmd.append(cmd);
+    }
+    if (batch_cmd.empty())
+        return false;
+    std::vector<std::string> response;
+    if (!transport->SendWithReply(batch_cmd, response, 1500))
+        return false;
+    std::string current_key;
+    for (const auto &line : response)
+    {
+        auto trimmed = TrimCopy(line);
+        if (trimmed.empty() || trimmed == "timeout")
+            continue;
+        if (trimmed.rfind("__key__", 0) == 0)
+        {
+            current_key = trimmed.substr(7);
+            continue;
+        }
+        if (!current_key.empty() && batch_values.find(current_key) == batch_values.end())
+        {
+            batch_values[current_key] = trimmed;
+        }
+    }
+    if (batch_values.empty())
+        return false;
+    return FillRemoteSnapshotFromMap(batch_values, snapshot);
+}
+
+bool Application::CollectRemoteStateAsync(const std::shared_ptr<UdpCommandClient> &transport)
+{
+    if (!transport)
+        return false;
+    std::string batch_cmd;
+    const std::vector<std::string> keys = {"channel", "bandwidth", "sky_power", "sky_mcs",
+                                           "bitrate", "sky_size", "sky_fps"};
+    for (const auto &key : keys)
+    {
+        auto cmd = command_templates_.Render("remote_query", key, {});
+        if (cmd.empty())
+            continue;
+        if (!batch_cmd.empty())
+            batch_cmd.append(" ; ");
+        batch_cmd.append("echo __key__");
+        batch_cmd.append(key);
+        batch_cmd.append(" ; ");
+        batch_cmd.append(cmd);
+    }
+    if (batch_cmd.empty())
+        return false;
+
+    return transport->SendWithReplyAsync(
+        batch_cmd, keys,
+        [this](const std::unordered_map<std::string, std::string> &values, bool ok)
+        {
+            if (ok)
+            {
+                RemoteStateSnapshot snapshot{};
+                if (FillRemoteSnapshotFromMap(values, snapshot))
+                {
+                    std::lock_guard<std::mutex> lock(remote_state_mutex_);
+                    pending_remote_state_ = snapshot;
+                    remote_sync_ready_ = true;
+                }
+            }
+            remote_sync_inflight_.store(false, std::memory_order_release);
+            MaybeLaunchRemoteSyncJob();
+        },
+        1500);
+}
+
 void Application::ApplyRemoteStateSnapshot(const RemoteStateSnapshot &snapshot)
 {
     if (!menu_state_)
@@ -2867,6 +2970,8 @@ bool Application::QueryRemoteValue(const std::string &key, std::string &out,
                                    const std::shared_ptr<CommandTransport> &transport)
 {
     if (!transport)
+        return false;
+    if (std::dynamic_pointer_cast<UdpCommandClient>(transport))
         return false;
     auto cmd = command_templates_.Render("remote_query", key, {});
     if (cmd.empty())

@@ -1027,6 +1027,7 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
                      });
 
             const auto &buffer_levels = state_.BufferLevels();
+            const auto &hdmi_attrs = state_.HdmiAttrs();
             row_pair(is_cn ? "\u7f13\u5b58\u7ea7\u522b" : "Buffer Level", [&]
                      {
                          if (buffer_levels.empty())
@@ -1059,10 +1060,67 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
                              }
                          });
                      },
-                     "",
+                     is_cn ? "HDMI\u8272\u5f69\u683c\u5f0f" : "HDMI colorspace",
                      [&]
                      {
-                             ImGui::Dummy(ImVec2(-1, 0));
+                            if (hdmi_attrs.empty())
+                            {
+                                ImGui::TextUnformatted("--");
+                                return;
+                            }
+                            register_focus(1, [&]
+                            {
+                                int idx = state_.HdmiAttrIndex();
+                                if (idx < 0 || idx >= static_cast<int>(hdmi_attrs.size()))
+                                    idx = 0;
+                                const std::string value = hdmi_attrs[idx];
+                                const char *label = nullptr;
+                                if (value == "rgb")
+                                {
+                                    label = "RGB";
+                                }
+                                else if (value == "422")
+                                {
+                                    label = "YUV422";
+                                }
+                                else
+                                {
+                                    label = "YUV420";
+                                }
+                                if (ImGui::BeginCombo("##hdmi_attr", label))
+                                {
+                                    for (int i = 0; i < static_cast<int>(hdmi_attrs.size()); ++i)
+                                    {
+                                        const std::string item_value = hdmi_attrs[i];
+                                        const char *item_label = nullptr;
+                                        if (item_value == "rgb")
+                                        {
+                                            item_label = "RGB";
+                                        }
+                                        else if (item_value == "422")
+                                        {
+                                            item_label = "YUV422";
+                                        }
+                                        else
+                                        {
+                                            item_label = "YUV420";
+                                        }
+                                        bool selected = (idx == i);
+                                        if (ImGui::Selectable(item_label, selected))
+                                        {
+                                            if (i != idx)
+                                            {
+                                                pending_hdmi_attr_index_ = i;
+                                                pending_hdmi_attr_value_ = item_value;
+                                                hdmi_attr_popup_pending_ = true;
+                                            }
+                                        }
+                                        if (selected)
+                                            ImGui::SetItemDefaultFocus();
+                                    }
+                                    ImGui::EndCombo();
+                                }
+                            });
                      });
 
             row_pair(is_cn ? "\u56fa\u4ef6\u6a21\u5f0f" : "Firmware", [&]
@@ -1274,6 +1332,16 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
             ImGui::OpenPopup("confirm_high_refresh_persist");
             high_refresh_persist_popup_pending_ = false;
         }
+        if (hdmi_attr_popup_pending_ && pending_hdmi_attr_index_ >= 0)
+        {
+            ImGui::OpenPopup("confirm_hdmi_attr");
+            hdmi_attr_popup_pending_ = false;
+        }
+        if (hdmi_attr_persist_popup_pending_)
+        {
+            ImGui::OpenPopup("confirm_hdmi_attr_persist");
+            hdmi_attr_persist_popup_pending_ = false;
+        }
 
         ImGui::SetNextWindowSize(ImVec2(420.0f, 0), ImGuiCond_FirstUseEver);
         ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + viewport->Size.x * 0.5f,
@@ -1352,6 +1420,84 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
                     state_.SetGroundModePersisted(pending_high_refresh_label_, true);
                     pending_high_refresh_label_.clear();
                 }
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+
+        ImGui::SetNextWindowSize(ImVec2(420.0f, 0), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + viewport->Size.x * 0.5f,
+                                       viewport->Pos.y + viewport->Size.y * 0.5f),
+                                ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+        if (ImGui::BeginPopupModal("confirm_hdmi_attr", nullptr,
+                                   ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar))
+        {
+            const char *msg = is_cn ? "\u5207\u6362 HDMI \u8272\u5f69\u683c\u5f0f\u53ef\u80fd\u5bfc\u81f4\u9ed1\u5c4f\uff0c\u662f\u5426\u7ee7\u7eed\uff1f"
+                                    : "Switching HDMI colorspace may cause a black screen. Continue?";
+            ImGui::TextWrapped("%s", msg);
+            ImGui::Spacing();
+            const float button_width = 130.0f;
+            const float spacing = ImGui::GetStyle().ItemSpacing.x;
+            const float total_width = button_width * 2.0f + spacing;
+            const float region_width = ImGui::GetContentRegionAvail().x;
+            const float base_x = ImGui::GetCursorPosX();
+            if (region_width > total_width)
+            {
+                ImGui::SetCursorPosX(base_x + (region_width - total_width) * 0.5f);
+            }
+            if (ImGui::Button(is_cn ? "\u53d6\u6d88" : "Cancel", ImVec2(button_width, 0)))
+            {
+                pending_hdmi_attr_index_ = -1;
+                pending_hdmi_attr_value_.clear();
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button(is_cn ? "\u7ee7\u7eed" : "Continue", ImVec2(button_width, 0)))
+            {
+                if (pending_hdmi_attr_index_ >= 0)
+                {
+                    state_.RequestHdmiAttrSkipSaveOnce();
+                    state_.SetHdmiAttrIndex(pending_hdmi_attr_index_);
+                    pending_hdmi_attr_index_ = -1;
+                }
+                hdmi_attr_persist_popup_pending_ = true;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+
+        ImGui::SetNextWindowSize(ImVec2(360.0f, 0), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + viewport->Size.x * 0.5f,
+                                       viewport->Pos.y + viewport->Size.y * 0.5f),
+                                ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+        if (ImGui::BeginPopupModal("confirm_hdmi_attr_persist", nullptr,
+                                   ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar))
+        {
+            const char *msg = is_cn ? "\u662f\u5426\u4ee5\u540e\u9ed8\u8ba4\u4f7f\u7528\u8be5\u8272\u5f69\u683c\u5f0f\uff1f"
+                                    : "Use this colorspace by default in the future?";
+            ImGui::TextWrapped("%s", msg);
+            ImGui::Spacing();
+            const float button_width = 120.0f;
+            const float spacing = ImGui::GetStyle().ItemSpacing.x;
+            const float total_width = button_width * 2.0f + spacing;
+            const float region_width = ImGui::GetContentRegionAvail().x;
+            const float base_x = ImGui::GetCursorPosX();
+            if (region_width > total_width)
+            {
+                ImGui::SetCursorPosX(base_x + (region_width - total_width) * 0.5f);
+            }
+            if (ImGui::Button(is_cn ? "\u5426" : "No", ImVec2(button_width, 0)))
+            {
+                pending_hdmi_attr_value_.clear();
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button(is_cn ? "\u662f" : "Yes", ImVec2(button_width, 0)))
+            {
+                state_.RequestHdmiAttrForceSaveOnce();
+                state_.ForceHdmiAttrNotifyOnce();
+                state_.SetHdmiAttrIndex(state_.HdmiAttrIndex());
+                pending_hdmi_attr_value_.clear();
                 ImGui::CloseCurrentPopup();
             }
             ImGui::EndPopup();

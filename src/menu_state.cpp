@@ -12,6 +12,7 @@ MenuState::MenuState(std::vector<VideoMode> sky_modes, std::vector<VideoMode> gr
       mcs_levels_(BuildRange(0, 12)),
       volume_levels_({0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100}),
       buffer_levels_(BuildRange(1, 64)),
+      hdmi_attrs_({"420", "422", "rgb"}),
       sky_modes_(std::move(sky_modes)),
       ground_modes_(std::move(ground_modes))
 {
@@ -34,6 +35,13 @@ MenuState::MenuState(std::vector<VideoMode> sky_modes, std::vector<VideoMode> gr
         if (buffer_level_index_ < 0 || buffer_level_index_ >= static_cast<int>(buffer_levels_.size()))
         {
             buffer_level_index_ = 0;
+        }
+    }
+    if (!hdmi_attrs_.empty())
+    {
+        if (hdmi_attr_index_ < 0 || hdmi_attr_index_ >= static_cast<int>(hdmi_attrs_.size()))
+        {
+            hdmi_attr_index_ = 2 < static_cast<int>(hdmi_attrs_.size()) ? 2 : 0;
         }
     }
 }
@@ -167,6 +175,47 @@ void MenuState::SetBufferLevelIndex(int index)
     }
     buffer_level_index_ = index;
     NotifyChange(SettingType::BufferLevel);
+}
+
+void MenuState::SetHdmiAttrIndex(int index)
+{
+    const bool force_notify = force_hdmi_attr_notify_once_;
+    if (!force_notify && hdmi_attr_index_ == index)
+    {
+        return;
+    }
+    hdmi_attr_index_ = index;
+    force_hdmi_attr_notify_once_ = false;
+    NotifyChange(SettingType::HdmiAttr);
+}
+
+void MenuState::RequestHdmiAttrSkipSaveOnce()
+{
+    hdmi_attr_skip_save_once_ = true;
+}
+
+bool MenuState::ConsumeHdmiAttrSkipSaveOnce()
+{
+    bool value = hdmi_attr_skip_save_once_;
+    hdmi_attr_skip_save_once_ = false;
+    return value;
+}
+
+void MenuState::RequestHdmiAttrForceSaveOnce()
+{
+    hdmi_attr_force_save_once_ = true;
+}
+
+bool MenuState::ConsumeHdmiAttrForceSaveOnce()
+{
+    bool value = hdmi_attr_force_save_once_;
+    hdmi_attr_force_save_once_ = false;
+    return value;
+}
+
+void MenuState::ForceHdmiAttrNotifyOnce()
+{
+    force_hdmi_attr_notify_once_ = true;
 }
 
 void MenuState::SetBadFrameIndex(int index)
