@@ -17,6 +17,7 @@ public:
     {
         Channel,
         Bandwidth,
+        NetworkMode,
         SkyMode,
         GroundMode,
         Bitrate,
@@ -46,6 +47,12 @@ public:
         Official = 1,
     };
 
+    enum class NetworkMode
+    {
+        Wfb = 0,
+        ConnectAp = 1,
+    };
+
     using SettingChangedCallback = std::function<void(SettingType)>;
     using ChangeVisibilityCallback = std::function<void(bool)>;
 
@@ -59,6 +66,7 @@ public:
     const std::vector<int> &VolumeLevels() const { return volume_levels_; }
     const std::vector<int> &BufferLevels() const { return buffer_levels_; }
     const std::vector<std::string> &HdmiAttrs() const { return hdmi_attrs_; }
+    const std::array<const char *, 2> &NetworkModes() const { return network_modes_; }
     bool MenuVisible() const { return menu_visible_; }
 
     int ChannelIndex() const { return channel_index_; }
@@ -66,6 +74,7 @@ public:
     int SkyModeIndex() const { return sky_mode_index_; }
     int GroundModeIndex() const { return ground_mode_index_; }
     int BitrateIndex() const { return bitrate_index_; }
+    int NetworkModeIndex() const { return network_mode_index_; }
     int SkyPowerIndex() const { return sky_power_index_; }
     int SkyMcsIndex() const { return sky_mcs_index_; }
     int GroundPowerIndex() const { return ground_power_index_; }
@@ -87,6 +96,7 @@ public:
     void SetSkyModeIndex(int index);
     void SetGroundModeIndex(int index);
     void SetBitrateIndex(int index);
+    void SetNetworkModeIndex(int index);
     void SetSkyMcsIndex(int index);
     void SetSkyPowerIndex(int index);
     void SetGroundPowerIndex(int index);
@@ -120,6 +130,7 @@ public:
     void RequestHdmiAttrForceSaveOnce();
     bool ConsumeHdmiAttrForceSaveOnce();
     void ForceHdmiAttrNotifyOnce();
+    void ForceNetworkModeNotifyOnce();
     bool ExperimentalGroundPersisted() const { return experimental_ground_persisted_; }
     void SetExperimentalGroundPersisted(bool value) { experimental_ground_persisted_ = value; }
     bool IsGroundModePersisted(const std::string &label) const;
@@ -139,6 +150,7 @@ private:
     std::vector<VideoMode> sky_modes_;
     std::vector<VideoMode> ground_modes_;
     std::array<const char *, 3> bandwidths_{{"10 MHz", "20 MHz", "40 MHz"}};
+    std::array<const char *, 2> network_modes_{{"WFB", "Connect AP"}};
 
     SettingChangedCallback on_change_callback_;
     ChangeVisibilityCallback on_change_visibility_callback_;
@@ -148,6 +160,7 @@ private:
     int sky_mode_index_ = 0;
     int ground_mode_index_ = 0;
     int bitrate_index_ = 0;
+    int network_mode_index_ = 0;
     int sky_power_index_ = 0;
     int sky_mcs_index_ = 2;
     int ground_power_index_ = 0;
@@ -169,6 +182,7 @@ private:
     bool hdmi_attr_skip_save_once_ = false;
     bool hdmi_attr_force_save_once_ = false;
     bool force_hdmi_attr_notify_once_ = false;
+    bool force_network_mode_notify_once_ = false;
     bool experimental_ground_persisted_ = false;
     std::unordered_set<std::string> persisted_ground_modes_;
     bool notify_enabled_ = true;

@@ -2,36 +2,25 @@
 
 #include "imgui.h"
 #include "backends/imgui_impl_opengl3.h"
+#include "display_platform.h"
+#include "input_controller.h"
 #include "video_mode.h"
 #include "mavlink_receiver.h"
 #include "udp_command_client.h"
 #include "ssh_command_client.h"
 #include "command_templates.h"
 #include "terminal.h"
-#include "splash_data.h"
 
-#include <zlib.h>
-
-#include <EGL/egl.h>
 #include <algorithm>
 #include <cmath>
 #include <cctype>
 #include <cstdlib>
 #include <cstdio>
 #include <cstring>
-#include <fcntl.h>
 #include <fstream>
-#include <glob.h>
-#include <linux/fb.h>
-#include <linux/input-event-codes.h>
-#include <linux/joystick.h>
-#include <poll.h>
-#include <signal.h>
-#include <cerrno>
 #include <unordered_map>
 #include <vector>
 #include <sstream>
-#include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <unistd.h>
@@ -40,9 +29,6 @@
 
 namespace
 {
-constexpr const char kDefaultStorageConfigPath[] = "/storage/digitalfpv/wfb.conf";
-constexpr const char kFlashConfigPath[] = "/flash/wfb.conf";
-
 std::string ShellEscape(const std::string &value)
 {
     std::string out;
@@ -70,7 +56,6 @@ Application::~Application() { Shutdown(); }
 namespace
 {
     constexpr float kOsdRefreshHz = 30.0f;
-    constexpr int kSplashHoldMs = 1500;
     std::string TrimCopy(const std::string &text)
     {
         size_t begin = 0;
@@ -227,23 +212,18 @@ bool Application::Initialize(const std::string &font_path, bool use_mock,
                              const std::string &terminal_font_path)
 {
     use_mock_ = use_mock;
-    if (!InitFramebuffer(fb_))
+    if (!display_platform_.Initialize())
     {
-        std::fprintf(stderr, "[AMLgsMenu] Failed to init framebuffer (/dev/fb0)\n");
+        std::fprintf(stderr, "[AMLgsMenu] Failed to init display platform\n");
         return false;
     }
-    if (!InitEgl(fb_))
-    {
-        std::fprintf(stderr, "[AMLgsMenu] Failed to init EGL/GLES\n");
-        return false;
-    }
-    if (!InitInput())
+    input_controller_ = std::make_unique<InputController>();
+    if (!input_controller_->Initialize())
     {
         std::fprintf(stderr, "[AMLgsMenu] Failed to init libinput/udev\n");
         return false;
     }
-    ScanJoysticks();
-    last_js_scan_ = std::chrono::steady_clock::now();
+    input_controller_->ScanJoysticks();
     command_templates_.LoadFromFile(command_cfg_path_);
     cmd_runner_ = std::make_unique<CommandExecutor>();
     cmd_runner_->Start();
@@ -298,25 +278,59 @@ bool Application::Initialize(const std::string &font_path, bool use_mock,
     auto ground_modes = LoadHdmiModes("/sys/class/amhdmitx/amhdmitx0/disp_cap");
     if (ground_modes.empty())
     {
-        std::cout << "[AMLgsMenu] failed to load ground HDMI modes, using sky modes as fallback" << std::endl;
-        ground_modes = sky_modes;
+        std::cout << "[AMLgsMenu] failed to load ground HDMI modes, using 1080p60hz as fallback" << std::endl;
+        ground_modes = {VideoMode{"1080p60hz", 1920, 1080, 60}};
     }
-    bool has_native_120 = std::any_of(ground_modes.begin(), ground_modes.end(),
-                                      [](const VideoMode &m)
-                                      { return m.refresh == 120; });
-    if (!has_native_120)
+    if (!std::any_of(ground_modes.begin(), ground_modes.end(),
+                     [](const VideoMode &m)
+                     { return m.refresh == 120; }))
     {
-        std::cout << "[AMLgsMenu] not found 120hz display mode" << std::endl;
+        std::cout << "[AMLgsMenu] add 120hz display mode fallback" << std::endl;
         ground_modes.push_back(VideoMode{"1080p120hz", 1920, 1080, 120});
         ground_modes.push_back(VideoMode{"720p120hz", 1280, 720, 120});
     }
     menu_state_ = std::make_unique<MenuState>(sky_modes, ground_modes);
     if (!EnsureWritableConfig())
     {
-        std::fprintf(stderr, "[AMLgsMenu] Warning: failed to prepare config file '%s'\n", config_path_.c_str());
+        std::fprintf(stderr, "[AMLgsMenu] Warning: failed to prepare config file '%s'\n", config_.ConfigPath().c_str());
     }
     LoadConfig();
     RebuildTransport(menu_state_->GetFirmwareType());
+    settings_controller_ = std::make_unique<LinkSettingsController>(*menu_state_, command_templates_);
+    settings_controller_->SetHooks(
+        [this]()
+        { return AcquireTransport(); },
+        [this](std::function<void()> job)
+        {
+            if (cmd_runner_)
+            {
+                cmd_runner_->EnqueueRemote(std::move(job));
+            }
+        },
+        [this](const std::string &cmd)
+        {
+            if (cmd_runner_)
+            {
+                cmd_runner_->EnqueueShell(cmd);
+            }
+            else
+            {
+                std::system(cmd.c_str());
+            }
+        });
+    remote_sync_ = std::make_unique<RemoteSyncService>(*menu_state_, command_templates_, config_);
+    remote_sync_->SetHooks(
+        [this]()
+        { return AcquireTransport(); },
+        [this]()
+        { return EnsureCommandRunnerForRemoteSync(); },
+        [this](std::function<void()> job)
+        {
+            if (cmd_runner_)
+            {
+                cmd_runner_->EnqueueRemote(std::move(job));
+            }
+        });
     StartRemoteSync();
     ApplyLanguageToImGui(menu_state_->GetLanguage());
     if (!use_mock_)
@@ -347,7 +361,10 @@ bool Application::Initialize(const std::string &font_path, bool use_mock,
                 if (snap.packet_rate.valid && snap.packet_rate.primary_mbps > 0.0f)
                 {
                     data.bitrate_mbps = snap.packet_rate.primary_mbps;
-                    RequestIdrFrame();
+                    if (settings_controller_)
+                    {
+                        settings_controller_->RequestIdrFrame();
+                    }
                 }
                 if (snap.has_ground_temp)
                 {
@@ -394,24 +411,65 @@ bool Application::Initialize(const std::string &font_path, bool use_mock,
         [this]()
         { return UpdateStatus(); },
         [this]()
-        { RequestReboot(); });
-    InitSplash();
+        { RequestReboot(); },
+        [this](const std::string &ssid, const std::string &password)
+        { return UpdateWifiClientConfig(ssid, password); },
+        config_.WifiClientSsid(), config_.WifiClientPassword());
+    splash_player_.Init();
+    input_controller_->SetCallbacks({
+        [this]()
+        {
+            return menu_state_ && menu_state_->MenuVisible();
+        },
+        [this]()
+        {
+            if (menu_state_)
+                menu_state_->ToggleMenuVisibility();
+        },
+        [this](bool visible)
+        {
+            if (menu_state_)
+                menu_state_->SetMenuVisible(visible);
+        },
+        [this](bool visible)
+        {
+            UpdateCommandRunner(visible);
+        },
+        [this]()
+        {
+            return terminal_ && terminal_->isTerminalVisible();
+        },
+        [this](char c)
+        {
+            if (terminal_)
+                terminal_->SendControlChar(c);
+        },
+        [this](int sig)
+        {
+            if (terminal_)
+                terminal_->SendSignal(sig);
+        },
+    });
 
     menu_state_->SetOnChangeCallback([this](MenuState::SettingType type)
                                      {
         switch (type) {
         case MenuState::SettingType::Channel:
             SaveConfigValue("channel", std::to_string(menu_state_->Channels()[menu_state_->ChannelIndex()]));
-            ApplyChannel();
+            if (settings_controller_) settings_controller_->ApplyChannel();
             break;
         case MenuState::SettingType::Bandwidth:
             SaveConfigValue("bandwidth", std::to_string((menu_state_->BandwidthIndex() == 0) ? 10 :
                                                         (menu_state_->BandwidthIndex() == 1) ? 20 : 40));
-            ApplyBandwidth();
+            if (settings_controller_) settings_controller_->ApplyBandwidth();
+            break;
+        case MenuState::SettingType::NetworkMode:
+            SaveConfigValue("ap_mode", menu_state_->NetworkModeIndex() == 1 ? "1" : "0");
+            if (settings_controller_) settings_controller_->ApplyNetworkMode();
             break;
         case MenuState::SettingType::GroundMode: {
             // update ground_res and clean legacy typo
-            config_kv_.erase("groud_res");
+            config_.MutableValues().erase("groud_res");
             const auto &modes = menu_state_->GroundModes();
             if (modes.empty())
                 break;
@@ -427,28 +485,28 @@ bool Application::Initialize(const std::string &font_path, bool use_mock,
                     menu_state_->SetGroundModePersisted(mode.label, true);
                 }
             }
-            ApplyGroundDisplayMode(mode.label);
+            if (settings_controller_) settings_controller_->ApplyGroundDisplayMode(mode.label);
             break;
         }
         case MenuState::SettingType::SkyMode:
-            ApplySkyMode();
+            if (settings_controller_) settings_controller_->ApplySkyMode();
             break;
         case MenuState::SettingType::GroundPower:
             SaveConfigValue("driver_txpower_override", std::to_string(menu_state_->PowerLevels()[menu_state_->GroundPowerIndex()]));
-            ApplyGroundPower();
+            if (settings_controller_) settings_controller_->ApplyGroundPower();
             break;
         case MenuState::SettingType::Bitrate:
-            ApplyBitrate();
+            if (settings_controller_) settings_controller_->ApplyBitrate();
             break;
         case MenuState::SettingType::SkyMcs:
-            ApplySkyMcs();
+            if (settings_controller_) settings_controller_->ApplySkyMcs();
             break;
         case MenuState::SettingType::SkyPower:
-            ApplySkyPower();
+            if (settings_controller_) settings_controller_->ApplySkyPower();
             break;
         case MenuState::SettingType::SoundEnable:
             SaveConfigValue("sound", menu_state_->SoundEnabled() ? "1" : "0");
-            ApplySoundEnabled();
+            if (settings_controller_) settings_controller_->ApplySoundEnabled();
             break;
         case MenuState::SettingType::SoundVolume: {
             const auto &volumes = menu_state_->VolumeLevels();
@@ -458,7 +516,7 @@ bool Application::Initialize(const std::string &font_path, bool use_mock,
                 if (idx < 0 || idx >= static_cast<int>(volumes.size()))
                     idx = std::max(0, std::min(static_cast<int>(volumes.size()) - 1, idx));
                 SaveConfigValue("sound_volume", std::to_string(volumes[idx]));
-                ApplySoundVolume();
+                if (settings_controller_) settings_controller_->ApplySoundVolume();
             }
             break;
         }
@@ -511,12 +569,12 @@ bool Application::Initialize(const std::string &font_path, bool use_mock,
         case MenuState::SettingType::BadFramePolicy: {
             int value = (menu_state_->BadFrameIndex() == 0) ? 0 : 176;
             SaveConfigValue("bad_frame", std::to_string(value));
-            ApplyBadFramePolicy();
+            if (settings_controller_) settings_controller_->ApplyBadFramePolicy();
             break;
         }
         case MenuState::SettingType::AdaptiveLink: {
             SaveConfigValue("alink", menu_state_->AdaptiveLinkEnabled() ? "1" : "0");
-            ApplyAdaptiveLink();
+            if (settings_controller_) settings_controller_->ApplyAdaptiveLink();
             break;
         }
         case MenuState::SettingType::Language: {
@@ -527,10 +585,7 @@ bool Application::Initialize(const std::string &font_path, bool use_mock,
         }
         case MenuState::SettingType::Recording: {
             bool recording = menu_state_->Recording();
-            if (!SendRecordingCommand(recording)) {
-                std::fprintf(stderr, "[AMLgsMenu] Failed to send recording command (%s)\n",
-                             recording ? "record=1" : "record=0");
-            }
+            if (settings_controller_) settings_controller_->ApplyRecording(recording);
             break;
         }
         case MenuState::SettingType::Firmware: {
@@ -554,7 +609,8 @@ bool Application::Initialize(const std::string &font_path, bool use_mock,
 void Application::Run()
 {
     ImGuiIO &io = ImGui::GetIO();
-    io.DisplaySize = ImVec2(static_cast<float>(fb_.width), static_cast<float>(fb_.height));
+    io.DisplaySize = ImVec2(static_cast<float>(display_platform_.width()),
+                           static_cast<float>(display_platform_.height()));
     io.MousePos = ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f);
 
     uint64_t frame_counter = 0;
@@ -564,8 +620,12 @@ void Application::Run()
     while (running_ && !menu_state_->ShouldExit())
     {
         const auto loop_begin = frame_start;
-        ProcessInput(running_);
-        DrainRemoteState();
+        if (input_controller_)
+            input_controller_->Process(running_, display_platform_.width(), display_platform_.height());
+        if (remote_sync_)
+        {
+            remote_sync_->DrainPending();
+        }
         UpdateDeltaTime();
 
         ImGui_ImplOpenGL3_NewFrame();
@@ -576,24 +636,24 @@ void Application::Run()
         {
             terminal_->render();
         }
-        RenderSplashOverlay();
+        splash_player_.RenderOverlay();
 
         ImGui::Render();
-        glViewport(0, 0, fb_.width, fb_.height);
+        glViewport(0, 0, display_platform_.width(), display_platform_.height());
         glClearColor(0, 0, 0, 0);
         glClear(GL_COLOR_BUFFER_BIT);
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
         eglWaitGL();
         auto before_swap = std::chrono::steady_clock::now();
-        if (!eglSwapBuffers(egl_display_, egl_surface_))
+        if (!eglSwapBuffers(display_platform_.display(), display_platform_.surface()))
         {
             EGLint egl_err = eglGetError();
             std::fprintf(stderr, "[AMLgsMenu] eglSwapBuffers failed (err=0x%04x), stopping loop\n",
                          static_cast<unsigned int>(egl_err));
             EGLint width = 0, height = 0;
-            if (egl_surface_ != EGL_NO_SURFACE &&
-                eglQuerySurface(egl_display_, egl_surface_, EGL_WIDTH, &width) &&
-                eglQuerySurface(egl_display_, egl_surface_, EGL_HEIGHT, &height))
+            if (display_platform_.surface() != EGL_NO_SURFACE &&
+                eglQuerySurface(display_platform_.display(), display_platform_.surface(), EGL_WIDTH, &width) &&
+                eglQuerySurface(display_platform_.display(), display_platform_.surface(), EGL_HEIGHT, &height))
             {
                 GLint current_tex = 0;
                 glGetIntegerv(GL_TEXTURE_BINDING_2D, &current_tex);
@@ -631,7 +691,8 @@ void Application::Run()
                 float step = std::min(remaining, slice);
                 std::this_thread::sleep_for(std::chrono::duration<float>(step));
                 remaining -= step;
-                ProcessInput(running_);
+                if (input_controller_)
+                    input_controller_->Process(running_, display_platform_.width(), display_platform_.height());
                 if (!running_ || menu_state_->ShouldExit())
                     break;
             }
@@ -693,14 +754,18 @@ void Application::Shutdown()
 
     initialized_ = false;
     running_ = false;
-    CloseJoysticks();
+    if (input_controller_)
+    {
+        input_controller_->Shutdown();
+        input_controller_.reset();
+    }
 
     if (mav_receiver_)
     {
         mav_receiver_->Stop();
         mav_receiver_.reset();
     }
-    ShutdownSplash();
+    splash_player_.Shutdown();
     if (cmd_runner_)
     {
         cmd_runner_->Stop();
@@ -727,349 +792,20 @@ void Application::Shutdown()
 
     ImGui_ImplOpenGL3_Shutdown();
     ImGui::DestroyContext();
-
-    if (egl_display_ != EGL_NO_DISPLAY)
-    {
-        eglMakeCurrent(egl_display_, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
-    }
-    if (egl_context_ != EGL_NO_CONTEXT)
-    {
-        eglDestroyContext(egl_display_, egl_context_);
-        egl_context_ = EGL_NO_CONTEXT;
-    }
-    if (egl_surface_ != EGL_NO_SURFACE)
-    {
-        eglDestroySurface(egl_display_, egl_surface_);
-        egl_surface_ = EGL_NO_SURFACE;
-    }
-    if (egl_display_ != EGL_NO_DISPLAY)
-    {
-        eglTerminate(egl_display_);
-        egl_display_ = EGL_NO_DISPLAY;
-    }
-    if (li_ctx_)
-    {
-        libinput_unref(li_ctx_);
-        li_ctx_ = nullptr;
-    }
-    if (udev_ctx_)
-    {
-        udev_unref(udev_ctx_);
-        udev_ctx_ = nullptr;
-    }
-    if (fb_.fd >= 0)
-    {
-        close(fb_.fd);
-        fb_.fd = -1;
-    }
+    display_platform_.Shutdown();
 }
 
-void Application::ApplyChannel()
+bool Application::UpdateWifiClientConfig(const std::string &ssid, const std::string &password)
 {
-    const auto &chs = menu_state_->Channels();
-    if (chs.empty())
-        return;
-    int ch = chs[menu_state_->ChannelIndex()];
-    if (auto transport = AcquireTransport())
+    // 更新 Wi‑Fi 客户端（AP）配置后立即让 ConnMan 重新加载
+    // 通过调用 LinkSettingsController::ApplyNetworkMode 触发
+    // "systemctl restart connman && systemctl restart wifibroadcast"
+    bool ok = config_.UpdateWifiClientConfig(ssid, password);
+    if (ok && settings_controller_)
     {
-        std::unordered_map<std::string, std::string> vars{{"CHANNEL", std::to_string(ch)}};
-        auto cmd = command_templates_.Render("remote", "channel", vars);
-        if (!cmd.empty() && cmd_runner_)
-        {
-            cmd_runner_->EnqueueRemote([transport, cmd]()
-                                       {
-                if (!transport->Send(cmd, false))
-                {
-                    std::fprintf(stderr, "[AMLgsMenu] Failed to send channel command\n");
-                } });
-        }
+        settings_controller_->ApplyNetworkMode(); // 重启 connman 使新 AP 配置生效
     }
-    ApplyLocalMonitorChannel(ch);
-}
-
-void Application::ApplyBandwidth()
-{
-    int bw = (menu_state_->BandwidthIndex() == 0) ? 10 : (menu_state_->BandwidthIndex() == 1 ? 20 : 40);
-    if (auto transport = AcquireTransport())
-    {
-        std::unordered_map<std::string, std::string> vars{
-            {"BANDWIDTH", std::to_string(bw)}};
-        auto cmd = command_templates_.Render("remote", "bandwidth", vars);
-        if (!cmd.empty() && cmd_runner_)
-        {
-            cmd_runner_->EnqueueRemote([transport, cmd]()
-                                       {
-                if (!transport->Send(cmd, false))
-                {
-                    std::fprintf(stderr, "[AMLgsMenu] Failed to send bandwidth command\n");
-                } });
-        }
-    }
-}
-
-void Application::ApplySkyMode()
-{
-    const auto &sky_modes = menu_state_->SkyModes();
-    if (sky_modes.empty())
-        return;
-    VideoMode mode = sky_modes[menu_state_->SkyModeIndex()];
-    if (auto transport = AcquireTransport())
-    {
-        std::unordered_map<std::string, std::string> vars{
-            {"WIDTH", std::to_string(mode.width)},
-            {"HEIGHT", std::to_string(mode.height)},
-            {"FPS", std::to_string(mode.refresh ? mode.refresh : 60)}};
-        auto cmd = command_templates_.Render("remote", "sky_mode", vars);
-        if (!cmd.empty() && cmd_runner_)
-        {
-            cmd_runner_->EnqueueRemote([transport, cmd]()
-                                       {
-                if (!transport->Send(cmd, false))
-                {
-                    std::fprintf(stderr, "[AMLgsMenu] Failed to send sky mode command\n");
-                } });
-        }
-    }
-}
-
-void Application::ApplyGroundDisplayMode(const std::string &label)
-{
-    std::ofstream ofs("/sys/class/display/mode");
-    if (!ofs.is_open())
-    {
-        std::fprintf(stderr, "[AMLgsMenu] Failed to open /sys/class/display/mode for writing\n");
-        return;
-    }
-    ofs << label << std::endl;
-    if (!ofs.good())
-    {
-        std::fprintf(stderr, "[AMLgsMenu] Failed to write ground display mode '%s'\n", label.c_str());
-    }
-}
-
-void Application::ApplyBitrate()
-{
-    const auto &bitrates = menu_state_->Bitrates();
-    if (bitrates.empty())
-        return;
-    int br_mbps = bitrates[menu_state_->BitrateIndex()];
-    int br_kbps = br_mbps * 1024; // CLI expects kbps; e.g. 2 -> 2048
-    {
-        const auto &mcs_levels = menu_state_->McsLevels();
-        if (!mcs_levels.empty())
-        {
-            // Ensure MCS can sustain at least 2x target bitrate (Wi-Fi 5, long GI, 1SS).
-            float required_rate = static_cast<float>(br_mbps) * 2.0f;
-            if (br_mbps > 4)
-            {
-                required_rate += 1.0f;
-            }
-            const float rates_10[] = {3.25f, 6.5f, 9.75f, 13.0f, 19.5f, 26.0f, 29.25f, 32.5f, 39.0f, 43.3f};
-            const float rates_20[] = {6.5f, 13.0f, 19.5f, 26.0f, 39.0f, 52.0f, 58.5f, 65.0f, 78.0f, 86.7f};
-            const float rates_40[] = {13.5f, 27.0f, 40.5f, 54.0f, 81.0f, 108.0f, 121.5f, 135.0f, 162.0f, 180.0f};
-            const float *rates = rates_20;
-            switch (menu_state_->BandwidthIndex())
-            {
-            case 0:
-                rates = rates_10;
-                break;
-            case 2:
-                rates = rates_40;
-                break;
-            default:
-                rates = rates_20;
-                break;
-            }
-
-            int required_mcs = 9;
-            for (int i = 0; i < 10; ++i)
-            {
-                if (rates[i] >= required_rate)
-                {
-                    required_mcs = i;
-                    break;
-                }
-            }
-            int current_index = menu_state_->SkyMcsIndex();
-            if (current_index < 0 || current_index >= static_cast<int>(mcs_levels.size()))
-            {
-                current_index = 0;
-            }
-            int current_mcs = mcs_levels[current_index];
-            if (current_mcs != required_mcs)
-            {
-                int idx = FindMcsIndex(required_mcs);
-                if (idx < 0)
-                {
-                    idx = static_cast<int>(mcs_levels.size()) - 1;
-                }
-                if (idx >= 0 && idx < static_cast<int>(mcs_levels.size()))
-                {
-                    menu_state_->SetSkyMcsIndex(idx);
-                }
-            }
-        }
-    }
-    if (auto transport = AcquireTransport())
-    {
-        std::unordered_map<std::string, std::string> vars{
-            {"BITRATE_KBPS", std::to_string(br_kbps)}};
-        auto cmd = command_templates_.Render("remote", "bitrate", vars);
-        if (!cmd.empty() && cmd_runner_)
-        {
-            cmd_runner_->EnqueueRemote([transport, cmd]()
-                                       {
-                if (!transport->Send(cmd, false))
-                {
-                    std::fprintf(stderr, "[AMLgsMenu] Failed to send bitrate command\n");
-                } });
-        }
-    }
-}
-
-void Application::ApplySkyMcs()
-{
-    const auto &mcs_levels = menu_state_->McsLevels();
-    if (mcs_levels.empty())
-        return;
-    int idx = menu_state_->SkyMcsIndex();
-    if (idx < 0 || idx >= static_cast<int>(mcs_levels.size()))
-        return;
-    int mcs = mcs_levels[idx];
-    if (auto transport = AcquireTransport())
-    {
-        std::unordered_map<std::string, std::string> vars{
-            {"MCS", std::to_string(mcs)}};
-        auto cmd = command_templates_.Render("remote", "sky_mcs", vars);
-        if (!cmd.empty() && cmd_runner_)
-        {
-            cmd_runner_->EnqueueRemote([transport, cmd]()
-                                       {
-                if (!transport->Send(cmd, false))
-                {
-                    std::fprintf(stderr, "[AMLgsMenu] Failed to send sky MCS command\n");
-                } });
-        }
-    }
-}
-
-void Application::RequestIdrFrame()
-{
-    if (idr_requested_)
-        return;
-    auto cmd = command_templates_.Render("remote", "request_idr", {});
-    if (cmd.empty() || !cmd_runner_)
-        return;
-    if (auto transport = AcquireTransport())
-    {
-        idr_requested_ = true;
-        cmd_runner_->EnqueueRemote([transport, cmd]()
-                                   {
-            if (!transport->Send(cmd, false))
-            {
-                std::fprintf(stderr, "[AMLgsMenu] Failed to request IDR frame\n");
-            } });
-    }
-}
-
-void Application::ApplySkyPower()
-{
-    const auto &powers = menu_state_->PowerLevels();
-    if (powers.empty())
-        return;
-    int p = powers[menu_state_->SkyPowerIndex()];
-    if (auto transport = AcquireTransport())
-    {
-        int tx_pwr = p * 50;
-        std::unordered_map<std::string, std::string> vars{
-            {"POWER", std::to_string(p)},
-            {"TXPOWER", std::to_string(tx_pwr)}};
-        auto cmd = command_templates_.Render("remote", "sky_power", vars);
-        if (!cmd.empty() && cmd_runner_)
-        {
-            cmd_runner_->EnqueueRemote([transport, cmd]()
-                                       {
-                if (!transport->Send(cmd, false))
-                {
-                    std::fprintf(stderr, "[AMLgsMenu] Failed to send tx power command\n");
-                } });
-        }
-    }
-}
-
-void Application::ApplyGroundPower()
-{
-    const auto &powers = menu_state_->PowerLevels();
-    if (powers.empty())
-        return;
-    int p = powers[menu_state_->GroundPowerIndex()];
-    ApplyLocalMonitorPower(p);
-}
-
-void Application::ApplySoundEnabled()
-{
-    bool enabled = menu_state_->SoundEnabled();
-    if (!SendSoundCommand(enabled))
-    {
-        std::fprintf(stderr, "[AMLgsMenu] Failed to send sound command (%s)\n",
-                     enabled ? "sound=1" : "sound=0");
-    }
-}
-
-void Application::ApplySoundVolume()
-{
-    const auto &volumes = menu_state_->VolumeLevels();
-    if (volumes.empty())
-        return;
-    int idx = menu_state_->SoundVolumeIndex();
-    if (idx < 0 || idx >= static_cast<int>(volumes.size()))
-        idx = static_cast<int>(volumes.size()) - 1;
-    int volume = volumes[idx];
-    std::string cmd = "pactl set-sink-volume @DEFAULT_SINK@ " + std::to_string(volume) + "% >/dev/null 2>&1";
-    std::system(cmd.c_str());
-}
-
-void Application::ApplyBadFramePolicy()
-{
-    const char *key = (menu_state_->BadFrameIndex() == 0) ? "bad_frame_drop" : "bad_frame_ignore";
-    const std::string cmd = command_templates_.Render("local", key, {});
-    if (!cmd.empty())
-    {
-        if (cmd_runner_)
-        {
-            cmd_runner_->EnqueueShell(cmd);
-        }
-        else
-        {
-            std::system(cmd.c_str());
-        }
-        return;
-    }
-
-    int value = (menu_state_->BadFrameIndex() == 0) ? 0 : 176;
-    std::ofstream ofs("/sys/module/amvdec_h265/parameters/error_handle_policy");
-    if (!ofs.is_open())
-    {
-        std::fprintf(stderr, "[AMLgsMenu] Failed to open error_handle_policy\n");
-        return;
-    }
-    ofs << value << std::endl;
-    if (!ofs.good())
-    {
-        std::fprintf(stderr, "[AMLgsMenu] Failed to set error_handle_policy=%d\n", value);
-    }
-}
-
-void Application::ApplyAdaptiveLink()
-{
-    if (menu_state_->AdaptiveLinkEnabled())
-    {
-        std::system("systemctl enable alink && systemctl start alink");
-    }
-    else
-    {
-        std::system("systemctl disable alink");
-    }
+    return ok;
 }
 
 void Application::StartFirmwareUpdate(const std::string &path)
@@ -1135,943 +871,6 @@ void Application::RequestReboot()
     }
 }
 
-void Application::ApplyLocalMonitorChannel(int channel)
-{
-    if (channel <= 0)
-        return;
-    int bw_mhz = (menu_state_->BandwidthIndex() == 0) ? 10 : (menu_state_->BandwidthIndex() == 1 ? 20 : 40);
-    std::string bw_suffix;
-    if (bw_mhz == 20)
-        bw_suffix = " HT20";
-    else if (bw_mhz == 40)
-        bw_suffix = " HT40+";
-    std::unordered_map<std::string, std::string> vars{
-        {"CHANNEL", std::to_string(channel)},
-        {"BW_SUFFIX", bw_suffix}};
-    auto cmd = command_templates_.Render("local", "monitor_channel", vars);
-    if (!cmd.empty() && cmd_runner_)
-    {
-        cmd_runner_->EnqueueShell(cmd);
-    }
-}
-
-void Application::ApplyLocalMonitorPower(int power_level)
-{
-    if (power_level <= 0)
-        return;
-    int tx_pwr = power_level * 50;
-    std::unordered_map<std::string, std::string> vars{
-        {"POWER", std::to_string(power_level)},
-        {"TXPOWER", std::to_string(tx_pwr)}};
-    auto cmd = command_templates_.Render("local", "monitor_power", vars);
-    if (!cmd.empty() && cmd_runner_)
-    {
-        cmd_runner_->EnqueueShell(cmd);
-    }
-}
-
-bool Application::SendRecordingCommand(bool enable)
-{
-    const char *payload = enable ? "record=1" : "record=0";
-    return SendUdpControlCommand(5612, payload, "record");
-}
-
-bool Application::SendSoundCommand(bool enable)
-{
-    const char *payload = enable ? "sound=1" : "sound=0";
-    return SendUdpControlCommand(5612, payload, "sound");
-}
-
-bool Application::SendUdpControlCommand(uint16_t port, const char *payload, const char *tag)
-{
-    int sock = socket(AF_INET, SOCK_DGRAM, 0);
-    if (sock < 0)
-    {
-        std::fprintf(stderr, "[AMLgsMenu] socket(%s) failed: %s\n", tag, std::strerror(errno));
-        return false;
-    }
-    sockaddr_in addr{};
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(port);
-    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-    ssize_t sent = sendto(sock, payload, std::strlen(payload), 0,
-                          reinterpret_cast<const sockaddr *>(&addr), sizeof(addr));
-    if (sent < 0)
-    {
-        std::fprintf(stderr, "[AMLgsMenu] sendto(%s) failed: %s\n", tag, std::strerror(errno));
-        close(sock);
-        return false;
-    }
-    close(sock);
-    return true;
-}
-
-bool Application::InitFramebuffer(FbContext &fb)
-{
-    fb.fd = open("/dev/fb0", O_RDWR);
-    if (fb.fd < 0)
-    {
-        std::perror("[AMLgsMenu] open(/dev/fb0)");
-        return false;
-    }
-    fb_var_screeninfo vinfo{};
-    if (ioctl(fb.fd, FBIOGET_VSCREENINFO, &vinfo) != 0)
-    {
-        std::perror("[AMLgsMenu] ioctl(FBIOGET_VSCREENINFO)");
-        return false;
-    }
-    fb.width = static_cast<int>(vinfo.xres);
-    fb.height = static_cast<int>(vinfo.yres);
-    return true;
-}
-
-bool Application::InitEgl(const FbContext &fb)
-{
-    EGLint major = 0, minor = 0;
-    EGLint num_configs = 0;
-    EGLint attr[] = {
-        EGL_RED_SIZE, 8,
-        EGL_GREEN_SIZE, 8,
-        EGL_BLUE_SIZE, 8,
-        EGL_ALPHA_SIZE, 8,
-        EGL_DEPTH_SIZE, 0,
-        EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
-        EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
-        EGL_NONE};
-
-    egl_display_ = eglGetDisplay(EGL_DEFAULT_DISPLAY);
-    if (egl_display_ == EGL_NO_DISPLAY)
-    {
-        std::fprintf(stderr, "[AMLgsMenu] eglGetDisplay failed\n");
-        return false;
-    }
-    if (!eglInitialize(egl_display_, &major, &minor))
-    {
-        std::fprintf(stderr, "[AMLgsMenu] eglInitialize failed\n");
-        return false;
-    }
-    if (!eglChooseConfig(egl_display_, attr, &egl_config_, 1, &num_configs) || num_configs == 0)
-    {
-        std::fprintf(stderr, "[AMLgsMenu] eglChooseConfig failed\n");
-        return false;
-    }
-    EGLint ctx_attr[] = {EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE};
-    egl_context_ = eglCreateContext(egl_display_, egl_config_, EGL_NO_CONTEXT, ctx_attr);
-    if (egl_context_ == EGL_NO_CONTEXT)
-    {
-        std::fprintf(stderr, "[AMLgsMenu] eglCreateContext failed\n");
-        return false;
-    }
-
-    fbdev_window native_window{fb.width, fb.height};
-    egl_surface_ = eglCreateWindowSurface(egl_display_, egl_config_, &native_window, nullptr);
-    if (egl_surface_ == EGL_NO_SURFACE)
-    {
-        std::fprintf(stderr, "[AMLgsMenu] eglCreateWindowSurface failed\n");
-        return false;
-    }
-    if (!eglMakeCurrent(egl_display_, egl_surface_, egl_surface_, egl_context_))
-    {
-        std::fprintf(stderr, "[AMLgsMenu] eglMakeCurrent failed\n");
-        return false;
-    }
-    // Restore vsync (swap interval 1); adjust if target platform requires immediate swaps.
-    eglSwapInterval(egl_display_, 1);
-    return true;
-}
-
-bool Application::InitInput()
-{
-    udev_ctx_ = udev_new();
-    if (!udev_ctx_)
-    {
-        std::fprintf(stderr, "[AMLgsMenu] udev_new failed\n");
-        return false;
-    }
-    static const libinput_interface iface = {
-        &Application::LibinputOpen,
-        &Application::LibinputClose,
-    };
-    li_ctx_ = libinput_udev_create_context(&iface, nullptr, udev_ctx_);
-    if (!li_ctx_)
-    {
-        std::fprintf(stderr, "[AMLgsMenu] libinput_udev_create_context failed\n");
-        return false;
-    }
-    if (libinput_udev_assign_seat(li_ctx_, "seat0") != 0)
-    {
-        std::fprintf(stderr, "[AMLgsMenu] libinput_udev_assign_seat failed\n");
-        return false;
-    }
-    return true;
-}
-
-void Application::ProcessInput(bool &running)
-{
-    if (!li_ctx_)
-        return;
-    pollfd pfd{};
-    pfd.fd = libinput_get_fd(li_ctx_);
-    pfd.events = POLLIN;
-    poll(&pfd, 1, 1);
-    if (libinput_dispatch(li_ctx_) != 0)
-        return;
-    libinput_event *event = nullptr;
-    while ((event = libinput_get_event(li_ctx_)) != nullptr)
-    {
-        HandleLibinputEvent(event, running);
-        libinput_event_destroy(event);
-    }
-    PollJoysticks(running);
-    auto now = std::chrono::steady_clock::now();
-    if (now - last_js_scan_ > std::chrono::seconds(2))
-    {
-        ScanJoysticks();
-        last_js_scan_ = now;
-    }
-}
-
-void Application::HandleLibinputEvent(struct libinput_event *event, bool &running)
-{
-    ImGuiIO &io = ImGui::GetIO();
-    auto add_key = [&](ImGuiKey key, bool down)
-    {
-        io.AddKeyEvent(key, down);
-    };
-    auto add_key_if_mapped = [&](uint32_t code, bool down)
-    {
-        ImGuiKey mapped = ImGuiKey_None;
-        if (code >= KEY_A && code <= KEY_Z)
-        {
-            mapped = static_cast<ImGuiKey>(ImGuiKey_A + (code - KEY_A));
-        }
-        else if (code >= KEY_1 && code <= KEY_9)
-        {
-            mapped = static_cast<ImGuiKey>(ImGuiKey_1 + (code - KEY_1));
-        }
-        else if (code == KEY_0)
-        {
-            mapped = ImGuiKey_0;
-        }
-        else if (code == KEY_SPACE)
-        {
-            mapped = ImGuiKey_Space;
-        }
-        else if (code == KEY_MINUS)
-        {
-            mapped = ImGuiKey_Minus;
-        }
-        else if (code == KEY_EQUAL)
-        {
-            mapped = ImGuiKey_Equal;
-        }
-        else if (code == KEY_DOT)
-        {
-            mapped = ImGuiKey_Period;
-        }
-        else if (code == KEY_COMMA)
-        {
-            mapped = ImGuiKey_Comma;
-        }
-        else if (code == KEY_SLASH)
-        {
-            mapped = ImGuiKey_Slash;
-        }
-        else if (code == KEY_SEMICOLON)
-        {
-            mapped = ImGuiKey_Semicolon;
-        }
-        else if (code == KEY_APOSTROPHE)
-        {
-            mapped = ImGuiKey_Apostrophe;
-        }
-        else if (code == KEY_GRAVE)
-        {
-            mapped = ImGuiKey_GraveAccent;
-        }
-        else if (code == KEY_LEFTBRACE)
-        {
-            mapped = ImGuiKey_LeftBracket;
-        }
-        else if (code == KEY_RIGHTBRACE)
-        {
-            mapped = ImGuiKey_RightBracket;
-        }
-        else if (code == KEY_BACKSLASH)
-        {
-            mapped = ImGuiKey_Backslash;
-        }
-        else if (code >= KEY_KP1 && code <= KEY_KP9)
-        {
-            mapped = static_cast<ImGuiKey>(ImGuiKey_Keypad1 + (code - KEY_KP1));
-        }
-        else if (code == KEY_KP0)
-        {
-            mapped = ImGuiKey_Keypad0;
-        }
-        else if (code == KEY_KPPLUS)
-        {
-            mapped = ImGuiKey_KeypadAdd;
-        }
-        else if (code == KEY_KPMINUS)
-        {
-            mapped = ImGuiKey_KeypadSubtract;
-        }
-        else if (code == KEY_KPASTERISK)
-        {
-            mapped = ImGuiKey_KeypadMultiply;
-        }
-        else if (code == KEY_KPSLASH)
-        {
-            mapped = ImGuiKey_KeypadDivide;
-        }
-        else if (code == KEY_KPDOT)
-        {
-            mapped = ImGuiKey_KeypadDecimal;
-        }
-        else if (code == KEY_KPENTER)
-        {
-            mapped = ImGuiKey_KeypadEnter;
-        }
-
-        if (mapped != ImGuiKey_None)
-        {
-            io.AddKeyEvent(mapped, down);
-        }
-    };
-    switch (libinput_event_get_type(event))
-    {
-    case LIBINPUT_EVENT_POINTER_MOTION:
-    {
-        auto *m = libinput_event_get_pointer_event(event);
-        io.MousePos.x += static_cast<float>(libinput_event_pointer_get_dx(m));
-        io.MousePos.y += static_cast<float>(libinput_event_pointer_get_dy(m));
-        break;
-    }
-    case LIBINPUT_EVENT_POINTER_BUTTON:
-    {
-        auto *b = libinput_event_get_pointer_event(event);
-        uint32_t button = libinput_event_pointer_get_button(b);
-        auto state = libinput_event_pointer_get_button_state(b);
-        bool pressed = (state == LIBINPUT_BUTTON_STATE_PRESSED);
-        if (button == BTN_LEFT)
-        {
-            io.MouseDown[0] = pressed;
-            if (pressed && !menu_state_->MenuVisible())
-            {
-                menu_state_->ToggleMenuVisibility();
-                UpdateCommandRunner(true);
-            }
-        }
-        if (button == BTN_RIGHT && pressed)
-        {
-            menu_state_->ToggleMenuVisibility();
-            UpdateCommandRunner(menu_state_->MenuVisible());
-        }
-        break;
-    }
-    case LIBINPUT_EVENT_POINTER_AXIS:
-    {
-        auto *a = libinput_event_get_pointer_event(event);
-        if (libinput_event_pointer_has_axis(a, LIBINPUT_POINTER_AXIS_SCROLL_VERTICAL))
-        {
-            double v = libinput_event_pointer_get_axis_value(a, LIBINPUT_POINTER_AXIS_SCROLL_VERTICAL);
-            const float kScrollScale = 0.35f; // slow down scroll for combos
-            io.MouseWheel += static_cast<float>(-v) * kScrollScale;
-        }
-        break;
-    }
-    case LIBINPUT_EVENT_KEYBOARD_KEY:
-    {
-        auto *k = libinput_event_get_keyboard_event(event);
-        uint32_t key = libinput_event_keyboard_get_key(k);
-        auto state = libinput_event_keyboard_get_key_state(k);
-        bool down = (state == LIBINPUT_KEY_STATE_PRESSED);
-        bool terminal_visible = terminal_ && terminal_->isTerminalVisible();
-        bool menu_visible = menu_state_->MenuVisible();
-        auto handle_gamepad_nav = [&](uint32_t code, bool pressed) -> bool
-        {
-            if (!menu_visible)
-                return false;
-            switch (code)
-            {
-            case BTN_DPAD_UP:
-                add_key(ImGuiKey_UpArrow, pressed);
-                return true;
-            case BTN_DPAD_DOWN:
-                add_key(ImGuiKey_DownArrow, pressed);
-                return true;
-            case BTN_DPAD_LEFT:
-                add_key(ImGuiKey_LeftArrow, pressed);
-                return true;
-            case BTN_DPAD_RIGHT:
-                add_key(ImGuiKey_RightArrow, pressed);
-                return true;
-            case BTN_SOUTH: // A button confirms selections
-                add_key(ImGuiKey_Enter, pressed);
-                return true;
-            default:
-                return false;
-            }
-        };
-
-        if (state == LIBINPUT_KEY_STATE_PRESSED)
-        {
-            if (!terminal_visible && (key == KEY_X || key == BTN_WEST))
-            {
-                menu_state_->ToggleMenuVisibility();
-                UpdateCommandRunner(menu_state_->MenuVisible());
-            }
-            if (!terminal_visible && (key == KEY_LEFTALT || key == KEY_RIGHTALT))
-            {
-                menu_state_->ToggleMenuVisibility();
-                UpdateCommandRunner(menu_state_->MenuVisible());
-            }
-            if (terminal_visible && key == KEY_C && (io.KeyCtrl || io.KeySuper))
-            {
-                std::fprintf(stdout, "[AMLgsMenu] Terminal ctrl-c triggered\n");
-                std::fflush(stdout);
-                terminal_->SendControlChar('\x03');
-                terminal_->SendSignal(SIGINT);
-            }
-            if (!terminal_visible && key == KEY_C && (io.KeyCtrl || io.KeySuper))
-            {
-                std::fprintf(stdout, "[AMLgsMenu] Ctrl-C quitting app\n");
-                std::fflush(stdout);
-                running = false;
-            }
-        }
-
-        handle_gamepad_nav(key, down);
-        switch (key)
-        {
-        case KEY_LEFTSHIFT:
-        case KEY_RIGHTSHIFT:
-            io.KeyShift = down;
-            add_key(ImGuiKey_LeftShift, down);
-            add_key(ImGuiKey_RightShift, down);
-            io.AddKeyEvent(ImGuiMod_Shift, down);
-            break;
-        case KEY_LEFTCTRL:
-        case KEY_RIGHTCTRL:
-            io.KeyCtrl = down;
-            add_key(ImGuiKey_LeftCtrl, down);
-            add_key(ImGuiKey_RightCtrl, down);
-            io.AddKeyEvent(ImGuiMod_Ctrl, down);
-            break;
-        case KEY_LEFTALT:
-        case KEY_RIGHTALT:
-            io.KeyAlt = down;
-            add_key(ImGuiKey_LeftAlt, down);
-            add_key(ImGuiKey_RightAlt, down);
-            io.AddKeyEvent(ImGuiMod_Alt, down);
-            break;
-        case KEY_LEFTMETA:
-        case KEY_RIGHTMETA:
-            io.KeySuper = down;
-            add_key(ImGuiKey_LeftSuper, down);
-            add_key(ImGuiKey_RightSuper, down);
-            io.AddKeyEvent(ImGuiMod_Super, down);
-            break;
-        case KEY_ENTER:
-        case KEY_KPENTER:
-            add_key(ImGuiKey_Enter, down);
-            break;
-        case KEY_BACKSPACE:
-            add_key(ImGuiKey_Backspace, down);
-            break;
-        case KEY_TAB:
-            add_key(ImGuiKey_Tab, down);
-            break;
-        case KEY_UP:
-            add_key(ImGuiKey_UpArrow, down);
-            break;
-        case KEY_DOWN:
-            add_key(ImGuiKey_DownArrow, down);
-            break;
-        case KEY_LEFT:
-            add_key(ImGuiKey_LeftArrow, down);
-            break;
-        case KEY_RIGHT:
-            add_key(ImGuiKey_RightArrow, down);
-            break;
-        case KEY_HOME:
-            add_key(ImGuiKey_Home, down);
-            break;
-        case KEY_END:
-            add_key(ImGuiKey_End, down);
-            break;
-        case KEY_DELETE:
-            add_key(ImGuiKey_Delete, down);
-            break;
-        case KEY_PAGEUP:
-            add_key(ImGuiKey_PageUp, down);
-            break;
-        case KEY_PAGEDOWN:
-            add_key(ImGuiKey_PageDown, down);
-            break;
-        default:
-            break;
-        }
-
-        add_key_if_mapped(key, down);
-
-        if (down)
-        {
-            auto emit_char = [&](ImWchar c)
-            { io.AddInputCharacter(c); };
-            auto emit_printable = [&](uint32_t code, bool shift) -> bool
-            {
-                switch (code)
-                {
-                case KEY_A:
-                    emit_char(shift ? 'A' : 'a');
-                    return true;
-                case KEY_B:
-                    emit_char(shift ? 'B' : 'b');
-                    return true;
-                case KEY_C:
-                    emit_char(shift ? 'C' : 'c');
-                    return true;
-                case KEY_D:
-                    emit_char(shift ? 'D' : 'd');
-                    return true;
-                case KEY_E:
-                    emit_char(shift ? 'E' : 'e');
-                    return true;
-                case KEY_F:
-                    emit_char(shift ? 'F' : 'f');
-                    return true;
-                case KEY_G:
-                    emit_char(shift ? 'G' : 'g');
-                    return true;
-                case KEY_H:
-                    emit_char(shift ? 'H' : 'h');
-                    return true;
-                case KEY_I:
-                    emit_char(shift ? 'I' : 'i');
-                    return true;
-                case KEY_J:
-                    emit_char(shift ? 'J' : 'j');
-                    return true;
-                case KEY_K:
-                    emit_char(shift ? 'K' : 'k');
-                    return true;
-                case KEY_L:
-                    emit_char(shift ? 'L' : 'l');
-                    return true;
-                case KEY_M:
-                    emit_char(shift ? 'M' : 'm');
-                    return true;
-                case KEY_N:
-                    emit_char(shift ? 'N' : 'n');
-                    return true;
-                case KEY_O:
-                    emit_char(shift ? 'O' : 'o');
-                    return true;
-                case KEY_P:
-                    emit_char(shift ? 'P' : 'p');
-                    return true;
-                case KEY_Q:
-                    emit_char(shift ? 'Q' : 'q');
-                    return true;
-                case KEY_R:
-                    emit_char(shift ? 'R' : 'r');
-                    return true;
-                case KEY_S:
-                    emit_char(shift ? 'S' : 's');
-                    return true;
-                case KEY_T:
-                    emit_char(shift ? 'T' : 't');
-                    return true;
-                case KEY_U:
-                    emit_char(shift ? 'U' : 'u');
-                    return true;
-                case KEY_V:
-                    emit_char(shift ? 'V' : 'v');
-                    return true;
-                case KEY_W:
-                    emit_char(shift ? 'W' : 'w');
-                    return true;
-                case KEY_X:
-                    emit_char(shift ? 'X' : 'x');
-                    return true;
-                case KEY_Y:
-                    emit_char(shift ? 'Y' : 'y');
-                    return true;
-                case KEY_Z:
-                    emit_char(shift ? 'Z' : 'z');
-                    return true;
-                case KEY_1:
-                    emit_char(shift ? '!' : '1');
-                    return true;
-                case KEY_2:
-                    emit_char(shift ? '@' : '2');
-                    return true;
-                case KEY_3:
-                    emit_char(shift ? '#' : '3');
-                    return true;
-                case KEY_4:
-                    emit_char(shift ? '$' : '4');
-                    return true;
-                case KEY_5:
-                    emit_char(shift ? '%' : '5');
-                    return true;
-                case KEY_6:
-                    emit_char(shift ? '^' : '6');
-                    return true;
-                case KEY_7:
-                    emit_char(shift ? '&' : '7');
-                    return true;
-                case KEY_8:
-                    emit_char(shift ? '*' : '8');
-                    return true;
-                case KEY_9:
-                    emit_char(shift ? '(' : '9');
-                    return true;
-                case KEY_0:
-                    emit_char(shift ? ')' : '0');
-                    return true;
-                case KEY_SPACE:
-                    emit_char(' ');
-                    return true;
-                case KEY_MINUS:
-                    emit_char(shift ? '_' : '-');
-                    return true;
-                case KEY_EQUAL:
-                    emit_char(shift ? '+' : '=');
-                    return true;
-                case KEY_LEFTBRACE:
-                    emit_char(shift ? '{' : '[');
-                    return true;
-                case KEY_RIGHTBRACE:
-                    emit_char(shift ? '}' : ']');
-                    return true;
-                case KEY_BACKSLASH:
-                    emit_char(shift ? '|' : '\\');
-                    return true;
-                case KEY_SEMICOLON:
-                    emit_char(shift ? ':' : ';');
-                    return true;
-                case KEY_APOSTROPHE:
-                    emit_char(shift ? '"' : '\'');
-                    return true;
-                case KEY_GRAVE:
-                    emit_char(shift ? '~' : '`');
-                    return true;
-                case KEY_COMMA:
-                    emit_char(shift ? '<' : ',');
-                    return true;
-                case KEY_DOT:
-                    emit_char(shift ? '>' : '.');
-                    return true;
-                case KEY_SLASH:
-                    emit_char(shift ? '?' : '/');
-                    return true;
-                case KEY_KP0:
-                    emit_char('0');
-                    return true;
-                case KEY_KP1:
-                    emit_char('1');
-                    return true;
-                case KEY_KP2:
-                    emit_char('2');
-                    return true;
-                case KEY_KP3:
-                    emit_char('3');
-                    return true;
-                case KEY_KP4:
-                    emit_char('4');
-                    return true;
-                case KEY_KP5:
-                    emit_char('5');
-                    return true;
-                case KEY_KP6:
-                    emit_char('6');
-                    return true;
-                case KEY_KP7:
-                    emit_char('7');
-                    return true;
-                case KEY_KP8:
-                    emit_char('8');
-                    return true;
-                case KEY_KP9:
-                    emit_char('9');
-                    return true;
-                case KEY_KPPLUS:
-                    emit_char('+');
-                    return true;
-                case KEY_KPMINUS:
-                    emit_char('-');
-                    return true;
-                case KEY_KPASTERISK:
-                    emit_char('*');
-                    return true;
-                case KEY_KPSLASH:
-                    emit_char('/');
-                    return true;
-                case KEY_KPDOT:
-                    emit_char('.');
-                    return true;
-                default:
-                    return false;
-                }
-            };
-
-            emit_printable(key, io.KeyShift);
-        }
-        break;
-    }
-    default:
-        break;
-    }
-    io.MousePos.x = std::max(0.0f, std::min(io.MousePos.x, static_cast<float>(fb_.width)));
-    io.MousePos.y = std::max(0.0f, std::min(io.MousePos.y, static_cast<float>(fb_.height)));
-}
-
-void Application::ScanJoysticks()
-{
-    glob_t globbuf{};
-    if (glob("/dev/input/js*", 0, nullptr, &globbuf) != 0)
-    {
-        return;
-    }
-    for (size_t i = 0; i < globbuf.gl_pathc; ++i)
-    {
-        const std::string path = globbuf.gl_pathv[i];
-        bool exists = std::any_of(joysticks_.begin(), joysticks_.end(),
-                                  [&](const JoystickDevice &dev)
-                                  { return dev.path == path; });
-        if (exists)
-            continue;
-
-        int fd = open(path.c_str(), O_RDONLY | O_NONBLOCK);
-        if (fd < 0)
-            continue;
-
-        JoystickDevice dev;
-        dev.fd = fd;
-        dev.path = path;
-        unsigned char axes = 0;
-        if (ioctl(fd, JSIOCGAXES, &axes) < 0 || axes == 0)
-            axes = 8;
-        dev.axes.assign(axes, 0);
-        unsigned char buttons = 0;
-        if (ioctl(fd, JSIOCGBUTTONS, &buttons) < 0 || buttons == 0)
-            buttons = 16;
-        dev.buttons.assign(buttons, 0);
-        joysticks_.push_back(std::move(dev));
-        std::fprintf(stdout, "[AMLgsMenu] Gamepad attached: %s\n", path.c_str());
-        std::fflush(stdout);
-    }
-    globfree(&globbuf);
-}
-
-void Application::CloseJoysticks()
-{
-    for (auto &dev : joysticks_)
-    {
-        if (dev.fd >= 0)
-        {
-            close(dev.fd);
-            dev.fd = -1;
-        }
-    }
-    joysticks_.clear();
-}
-
-void Application::RemoveJoystick(size_t index)
-{
-    if (index >= joysticks_.size())
-        return;
-
-    ImGuiIO &io = ImGui::GetIO();
-    auto release_dir = [&](bool &state, ImGuiKey key)
-    {
-        if (state)
-        {
-            io.AddKeyEvent(key, false);
-            state = false;
-        }
-    };
-    release_dir(joysticks_[index].dpad_up, ImGuiKey_UpArrow);
-    release_dir(joysticks_[index].dpad_down, ImGuiKey_DownArrow);
-    release_dir(joysticks_[index].dpad_left, ImGuiKey_LeftArrow);
-    release_dir(joysticks_[index].dpad_right, ImGuiKey_RightArrow);
-
-    if (joysticks_[index].fd >= 0)
-    {
-        close(joysticks_[index].fd);
-    }
-    std::fprintf(stdout, "[AMLgsMenu] Gamepad removed: %s\n", joysticks_[index].path.c_str());
-    std::fflush(stdout);
-    joysticks_.erase(joysticks_.begin() + index);
-}
-
-void Application::PollJoysticks(bool &running)
-{
-    (void)running;
-    if (joysticks_.empty())
-        return;
-
-    std::vector<size_t> to_remove;
-    for (size_t i = 0; i < joysticks_.size(); ++i)
-    {
-        auto &dev = joysticks_[i];
-        pollfd pfd{};
-        pfd.fd = dev.fd;
-        pfd.events = POLLIN;
-        int pret = poll(&pfd, 1, 0);
-        if (pret < 0)
-        {
-            if (errno == EINTR)
-                continue;
-            to_remove.push_back(i);
-            continue;
-        }
-        if (pret == 0)
-            continue;
-
-        if (pfd.revents & (POLLERR | POLLHUP))
-        {
-            to_remove.push_back(i);
-            continue;
-        }
-
-        while (true)
-        {
-            js_event ev{};
-            ssize_t n = read(dev.fd, &ev, sizeof(ev));
-            if (n == static_cast<ssize_t>(sizeof(ev)))
-            {
-                uint8_t type = ev.type & ~JS_EVENT_INIT;
-                if (type == JS_EVENT_BUTTON)
-                {
-                    bool pressed = ev.value != 0;
-                    if (ev.number < dev.buttons.size())
-                        dev.buttons[ev.number] = pressed;
-                    HandleJoystickButton(ev.number, pressed);
-                }
-                else if (type == JS_EVENT_AXIS)
-                {
-                    if (ev.number < dev.axes.size())
-                        dev.axes[ev.number] = ev.value;
-                    HandleJoystickAxis(dev, ev.number, ev.value);
-                }
-            }
-            else
-            {
-                if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
-                    break;
-                to_remove.push_back(i);
-                break;
-            }
-        }
-    }
-
-    if (!to_remove.empty())
-    {
-        std::sort(to_remove.begin(), to_remove.end());
-        to_remove.erase(std::unique(to_remove.begin(), to_remove.end()), to_remove.end());
-        for (auto it = to_remove.rbegin(); it != to_remove.rend(); ++it)
-        {
-            RemoveJoystick(*it);
-        }
-    }
-}
-
-void Application::HandleJoystickButton(int button, bool pressed)
-{
-    if (!menu_state_)
-        return;
-    ImGuiIO &io = ImGui::GetIO();
-    bool menu_visible = menu_state_->MenuVisible();
-    bool terminal_visible = terminal_ && terminal_->isTerminalVisible();
-
-    switch (button)
-    {
-    case 0: // A
-        if (!menu_visible && pressed)
-        {
-            menu_state_->SetMenuVisible(true);
-        }
-        else if (menu_visible)
-        {
-            io.AddKeyEvent(ImGuiKey_Enter, pressed);
-        }
-        break;
-    case 1: // B
-        if (menu_visible)
-            io.AddKeyEvent(ImGuiKey_Escape, pressed);
-        break;
-    case 2: // X
-        if (pressed && !terminal_visible)
-        {
-            menu_state_->ToggleMenuVisibility();
-            UpdateCommandRunner(menu_state_->MenuVisible());
-        }
-        break;
-    case 3: // Y
-        if (pressed && !terminal_visible)
-            menu_state_->SetMenuVisible(true);
-        break;
-    case 6: // Back
-        if (pressed && !terminal_visible)
-        {
-            menu_state_->ToggleMenuVisibility();
-            UpdateCommandRunner(menu_state_->MenuVisible());
-        }
-        break;
-    default:
-        break;
-    }
-}
-
-void Application::HandleJoystickAxis(JoystickDevice &dev, int axis, int16_t value)
-{
-    if (!menu_state_)
-        return;
-    ImGuiIO &io = ImGui::GetIO();
-    bool menu_visible = menu_state_->MenuVisible();
-    auto release = [&](bool &state, ImGuiKey key)
-    {
-        if (state)
-        {
-            io.AddKeyEvent(key, false);
-            state = false;
-        }
-    };
-    if (!menu_visible)
-    {
-        release(dev.dpad_up, ImGuiKey_UpArrow);
-        release(dev.dpad_down, ImGuiKey_DownArrow);
-        release(dev.dpad_left, ImGuiKey_LeftArrow);
-        release(dev.dpad_right, ImGuiKey_RightArrow);
-        return;
-    }
-
-    constexpr int16_t kDeadZone = 12000;
-    auto update_dir = [&](bool &state, bool new_state, ImGuiKey key)
-    {
-        if (state != new_state)
-        {
-            io.AddKeyEvent(key, new_state);
-            state = new_state;
-        }
-    };
-
-    if (axis == 6)
-    {
-        update_dir(dev.dpad_left, value < -kDeadZone, ImGuiKey_LeftArrow);
-        update_dir(dev.dpad_right, value > kDeadZone, ImGuiKey_RightArrow);
-    }
-    else if (axis == 7)
-    {
-        update_dir(dev.dpad_up, value < -kDeadZone, ImGuiKey_UpArrow);
-        update_dir(dev.dpad_down, value > kDeadZone, ImGuiKey_DownArrow);
-    }
-}
-
 void Application::UpdateDeltaTime()
 {
     ImGuiIO &io = ImGui::GetIO();
@@ -2080,1040 +879,50 @@ void Application::UpdateDeltaTime()
     last_frame_time_ = now;
 }
 
-void Application::InitSplash()
-{
-    ShutdownSplash();
-    if (kSplashFrameCount <= 0)
-    {
-        return;
-    }
-    splash_textures_.resize(kSplashFrameCount, 0);
-    glGenTextures(kSplashFrameCount, splash_textures_.data());
-    std::vector<unsigned char> decoded;
-    for (int i = 0; i < kSplashFrameCount; ++i)
-    {
-        if (!DecompressSplashFrame(i, decoded))
-        {
-            continue;
-        }
-        glBindTexture(GL_TEXTURE_2D, splash_textures_[i]);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, kSplashWidth, kSplashHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE, decoded.data());
-    }
-    glBindTexture(GL_TEXTURE_2D, 0);
-    splash_frame_offsets_.clear();
-    splash_total_duration_ms_ = 0;
-    const int delay_len = static_cast<int>(sizeof(kSplashFrameDelayMs) / sizeof(kSplashFrameDelayMs[0]));
-    for (int i = 0; i < kSplashFrameCount; ++i)
-    {
-        splash_frame_offsets_.push_back(splash_total_duration_ms_);
-        int delay_ms = (i < delay_len) ? kSplashFrameDelayMs[i] : (delay_len > 0 ? kSplashFrameDelayMs[delay_len - 1] : 0);
-        splash_total_duration_ms_ += delay_ms;
-    }
-    splash_start_time_ = std::chrono::steady_clock::now();
-    splash_active_ = true;
-}
-
-void Application::RenderSplashOverlay()
-{
-    if (!splash_active_ || splash_textures_.empty())
-    {
-        return;
-    }
-    if (splash_total_duration_ms_ <= 0)
-    {
-        ShutdownSplash();
-        return;
-    }
-    auto now = std::chrono::steady_clock::now();
-    int elapsed = static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(now - splash_start_time_).count());
-    const int splash_end_with_hold = splash_total_duration_ms_ + kSplashHoldMs;
-    if (elapsed >= splash_end_with_hold)
-    {
-        ShutdownSplash();
-        return;
-    }
-    float alpha = 1.0f;
-    int frame = kSplashFrameCount - 1;
-    if (elapsed < splash_total_duration_ms_)
-    {
-        const int delay_len = static_cast<int>(sizeof(kSplashFrameDelayMs) / sizeof(kSplashFrameDelayMs[0]));
-        for (int i = 0; i < kSplashFrameCount; ++i)
-        {
-            int start = (i < static_cast<int>(splash_frame_offsets_.size())) ? splash_frame_offsets_[i] : 0;
-            int delay = (i < delay_len) ? kSplashFrameDelayMs[i] : (delay_len > 0 ? kSplashFrameDelayMs[delay_len - 1] : 0);
-            if (delay <= 0)
-            {
-                delay = 1;
-            }
-            if (elapsed < start + delay)
-            {
-                frame = i;
-                break;
-            }
-        }
-    }
-    else
-    {
-        const int hold_elapsed = elapsed - splash_total_duration_ms_;
-        if (kSplashHoldMs > 0)
-        {
-            alpha = 1.0f - static_cast<float>(hold_elapsed) / static_cast<float>(kSplashHoldMs);
-            if (alpha < 0.0f)
-            {
-                alpha = 0.0f;
-            }
-        }
-    }
-    if (frame < 0 || frame >= static_cast<int>(splash_textures_.size()))
-    {
-        return;
-    }
-    GLuint tex = splash_textures_[frame];
-    if (tex == 0)
-    {
-        return;
-    }
-    const ImGuiViewport *viewport = ImGui::GetMainViewport();
-    const float x = viewport->Pos.x + (viewport->Size.x - static_cast<float>(kSplashWidth)) * 0.5f;
-    const float y = viewport->Pos.y + (viewport->Size.y - static_cast<float>(kSplashHeight)) * 0.5f;
-    ImVec2 min(x, y);
-    ImVec2 max(x + static_cast<float>(kSplashWidth), y + static_cast<float>(kSplashHeight));
-    ImGui::GetBackgroundDrawList()->AddImage(
-        (ImTextureID)(intptr_t)(tex), min, max, ImVec2(0, 0), ImVec2(1, 1),
-        ImGui::GetColorU32(ImVec4(1.0f, 1.0f, 1.0f, alpha)));
-}
-
-void Application::ShutdownSplash()
-{
-    if (!splash_textures_.empty())
-    {
-        glDeleteTextures(static_cast<GLsizei>(splash_textures_.size()), splash_textures_.data());
-    }
-    splash_textures_.clear();
-    splash_frame_offsets_.clear();
-    splash_total_duration_ms_ = 0;
-    splash_active_ = false;
-    splash_start_time_ = {};
-}
-
-bool Application::DecompressSplashFrame(int index, std::vector<unsigned char> &buffer) const
-{
-    if (index < 0 || index >= kSplashFrameCount)
-    {
-        return false;
-    }
-    const auto &rec = kSplashFrameRecords[index];
-    if (rec.uncompressed_length == 0)
-    {
-        return false;
-    }
-    buffer.resize(rec.uncompressed_length);
-    uLongf dest_len = rec.uncompressed_length;
-    const unsigned char *src = kSplashCompressedData + rec.offset;
-    int ret = uncompress(buffer.data(), &dest_len, src, rec.length);
-    if (ret != Z_OK || dest_len != rec.uncompressed_length)
-    {
-        return false;
-    }
-    return true;
-}
-
 void Application::LoadConfig()
 {
-    std::ifstream file(config_path_);
-    if (!file.is_open())
-    {
-        return;
-    }
-    std::string line;
-    while (std::getline(file, line))
-    {
-        if (line.empty() || line[0] == '#')
-            continue;
-        auto pos = line.find('=');
-        if (pos == std::string::npos)
-            continue;
-        std::string key = line.substr(0, pos);
-        std::string val = line.substr(pos + 1);
-        // trim spaces
-        key.erase(0, key.find_first_not_of(" \t"));
-        key.erase(key.find_last_not_of(" \t") + 1);
-        val.erase(0, val.find_first_not_of(" \t"));
-        val.erase(val.find_last_not_of(" \t\r\n") + 1);
-        config_kv_[key] = val;
-    }
-
-    bool channel_loaded = false;
-    auto it_ch = config_kv_.find("channel");
-    if (it_ch != config_kv_.end())
-    {
-        int ch = std::stoi(it_ch->second);
-        int idx = FindChannelIndex(ch);
-        if (idx >= 0)
-        {
-            menu_state_->SetChannelIndex(idx);
-            channel_loaded = true;
-        }
-    }
-    if (!channel_loaded)
-    {
-        int default_channel = 161;
-        int idx = FindChannelIndex(default_channel);
-        if (idx < 0 && !menu_state_->Channels().empty())
-            idx = FindChannelIndex(menu_state_->Channels()[0]);
-        if (idx >= 0 && !menu_state_->Channels().empty())
-        {
-            menu_state_->SetChannelIndex(idx);
-            config_kv_["channel"] = std::to_string(menu_state_->Channels()[idx]);
-        }
-    }
-
-    bool bandwidth_loaded = false;
-    auto it_bw = config_kv_.find("bandwidth");
-    if (it_bw != config_kv_.end())
-    {
-        int bw = std::stoi(it_bw->second);
-        if (bw == 10)
-        {
-            menu_state_->SetBandwidthIndex(0);
-            bandwidth_loaded = true;
-        }
-        else if (bw == 20)
-        {
-            menu_state_->SetBandwidthIndex(1);
-            bandwidth_loaded = true;
-        }
-        else if (bw == 40)
-        {
-            menu_state_->SetBandwidthIndex(2);
-            bandwidth_loaded = true;
-        }
-    }
-    if (!bandwidth_loaded)
-    {
-        menu_state_->SetBandwidthIndex(1); // default 20MHz
-        config_kv_["bandwidth"] = "20";
-    }
-
-    bool power_loaded = false;
-    auto it_power = config_kv_.find("driver_txpower_override");
-    if (it_power != config_kv_.end())
-    {
-        int p = std::stoi(it_power->second);
-        int idx = FindPowerIndex(p);
-        if (idx >= 0)
-        {
-            menu_state_->SetGroundPowerIndex(idx);
-            power_loaded = true;
-        }
-    }
-    if (!power_loaded)
-    {
-        int default_power = 5;
-        int idx = FindPowerIndex(default_power);
-        if (idx < 0)
-            idx = 0;
-        if (idx >= 0 && !menu_state_->PowerLevels().empty())
-        {
-            menu_state_->SetGroundPowerIndex(idx);
-            config_kv_["driver_txpower_override"] = std::to_string(menu_state_->PowerLevels()[idx]);
-        }
-    }
-
-    const auto &mcs_levels = menu_state_->McsLevels();
-    if (!mcs_levels.empty())
-    {
-        int default_mcs = 2;
-        int idx = FindMcsIndex(default_mcs);
-        if (idx < 0)
-            idx = 0;
-        if (idx >= 0 && idx < static_cast<int>(mcs_levels.size()))
-        {
-            menu_state_->SetSkyMcsIndex(idx);
-        }
-    }
-
-    bool ground_mode_loaded = false;
-    // support both correct key and legacy typo
-    auto it_res = config_kv_.find("ground_res");
-    if (it_res == config_kv_.end())
-    {
-        it_res = config_kv_.find("groud_res");
-    }
-    if (it_res != config_kv_.end())
-    {
-        std::string label = it_res->second;
-        while (!label.empty() && (label.back() == '*' || label.back() == ' ' || label.back() == '\t'))
-            label.pop_back();
-        int idx = FindGroundModeIndex(label);
-        if (idx >= 0)
-        {
-            menu_state_->SetGroundModeIndex(idx);
-            const auto &modes = menu_state_->GroundModes();
-            if (idx < static_cast<int>(modes.size()) && modes[idx].refresh > 60)
-            {
-                menu_state_->SetGroundModePersisted(modes[idx].label, true);
-            }
-            ground_mode_loaded = true;
-        }
-    }
-    if (!ground_mode_loaded)
-    {
-        std::string fallback = "1080p60hz";
-        int idx = FindGroundModeIndex(fallback);
-        if (idx < 0)
-            idx = 0;
-        const auto &modes = menu_state_->GroundModes();
-        if (idx >= 0 && idx < static_cast<int>(modes.size()))
-        {
-            menu_state_->SetGroundModeIndex(idx);
-            config_kv_["ground_res"] = modes[idx].label;
-        }
-    }
-
-    auto it_lang = config_kv_.find("lang");
-    if (it_lang != config_kv_.end())
-    {
-        std::string v = it_lang->second;
-        for (auto &c : v)
-            c = static_cast<char>(tolower(c));
-        if (v == "en")
-            menu_state_->SetLanguage(MenuState::Language::EN);
-        else if (v == "cn")
-            menu_state_->SetLanguage(MenuState::Language::CN);
-    }
-    auto it_sshpass = config_kv_.find("ssh_pass");
-    if (it_sshpass != config_kv_.end())
-    {
-        ssh_password_ = it_sshpass->second;
-    }
-    auto it_fw = config_kv_.find("firmware");
-    if (it_fw != config_kv_.end())
-    {
-        std::string v = it_fw->second;
-        for (auto &c : v)
-            c = static_cast<char>(tolower(c));
-        if (v == "official")
-        {
-            menu_state_->SetFirmwareType(MenuState::FirmwareType::Official);
-        }
-        else
-        {
-            menu_state_->SetFirmwareType(MenuState::FirmwareType::CCEdition);
-        }
-    }
-    auto it_sound = config_kv_.find("sound");
-    if (it_sound != config_kv_.end())
-    {
-        std::string v = it_sound->second;
-        for (auto &c : v)
-            c = static_cast<char>(tolower(c));
-        bool enabled = (v == "1" || v == "true" || v == "yes");
-        menu_state_->SetSoundEnabled(enabled);
-    }
-    else
-    {
-        config_kv_["sound"] = "0";
-        menu_state_->SetSoundEnabled(false);
-    }
-
-    auto it_alink = config_kv_.find("alink");
-    if (it_alink != config_kv_.end())
-    {
-        std::string v = it_alink->second;
-        for (auto &c : v)
-            c = static_cast<char>(tolower(c));
-        bool enabled = (v == "1" || v == "true" || v == "yes");
-        menu_state_->SetAdaptiveLinkEnabled(enabled);
-    }
-    else
-    {
-        config_kv_["alink"] = "0";
-        menu_state_->SetAdaptiveLinkEnabled(false);
-    }
-
-    const auto &volume_levels = menu_state_->VolumeLevels();
-    if (!volume_levels.empty())
-    {
-        int volume_value = volume_levels.back();
-        auto it_vol = config_kv_.find("sound_volume");
-        if (it_vol != config_kv_.end())
-        {
-            try
-            {
-                volume_value = std::stoi(it_vol->second);
-            }
-            catch (const std::exception &)
-            {
-                volume_value = volume_levels.back();
-            }
-        }
-        else
-        {
-            config_kv_["sound_volume"] = std::to_string(volume_levels.back());
-        }
-        int idx = 0;
-        for (int i = 0; i < static_cast<int>(volume_levels.size()); ++i)
-        {
-            if (volume_levels[i] == volume_value)
-            {
-                idx = i;
-                break;
-            }
-        }
-        if (idx < 0 || idx >= static_cast<int>(volume_levels.size()))
-        {
-            idx = static_cast<int>(volume_levels.size()) - 1;
-        }
-        menu_state_->SetSoundVolumeIndex(idx);
-        config_kv_["sound_volume"] = std::to_string(volume_levels[idx]);
-    }
-
-    const auto &buffer_levels = menu_state_->BufferLevels();
-    if (!buffer_levels.empty())
-    {
-        int buffer_value = 1;
-        auto it_buf = config_kv_.find("buf_level");
-        if (it_buf != config_kv_.end())
-        {
-            try
-            {
-                buffer_value = std::stoi(it_buf->second);
-            }
-            catch (const std::exception &)
-            {
-                buffer_value = 1;
-            }
-        }
-        int idx = 0;
-        for (int i = 0; i < static_cast<int>(buffer_levels.size()); ++i)
-        {
-            if (buffer_levels[i] == buffer_value)
-            {
-                idx = i;
-                break;
-            }
-        }
-        if (idx < 0 || idx >= static_cast<int>(buffer_levels.size()))
-        {
-            idx = 0;
-        }
-        menu_state_->SetBufferLevelIndex(idx);
-        config_kv_["buf_level"] = std::to_string(buffer_levels[idx]);
-    }
-
-    const auto &hdmi_attrs = menu_state_->HdmiAttrs();
-    if (!hdmi_attrs.empty())
-    {
-        std::string value = "rgb";
-        auto it_hdmi = config_kv_.find("hdmi_attr");
-        if (it_hdmi != config_kv_.end())
-        {
-            value = it_hdmi->second;
-        }
-        int idx = 0;
-        for (int i = 0; i < static_cast<int>(hdmi_attrs.size()); ++i)
-        {
-            if (hdmi_attrs[i] == value)
-            {
-                idx = i;
-                break;
-            }
-        }
-        if (idx < 0 || idx >= static_cast<int>(hdmi_attrs.size()))
-        {
-            idx = 2 < static_cast<int>(hdmi_attrs.size()) ? 2 : 0;
-            value = hdmi_attrs[idx];
-        }
-        menu_state_->SetHdmiAttrIndex(idx);
-        config_kv_["hdmi_attr"] = value;
-    }
-
-    auto it_bad = config_kv_.find("bad_frame");
-    if (it_bad != config_kv_.end())
-    {
-        int val = 176;
-        try
-        {
-            val = std::stoi(it_bad->second);
-        }
-        catch (const std::exception &)
-        {
-            val = 176;
-        }
-        menu_state_->SetBadFrameIndex(val == 0 ? 0 : 1);
-    }
-    else
-    {
-        config_kv_["bad_frame"] = "176";
-        menu_state_->SetBadFrameIndex(1);
-    }
+    config_.LoadInto(*menu_state_, ssh_password_);
 }
 
 bool Application::EnsureWritableConfig()
 {
-    if (config_path_.empty())
-    {
-        return false;
-    }
-    namespace fs = std::filesystem;
-    fs::path target(config_path_);
-    std::error_code ec;
-    fs::path parent = target.parent_path();
-    if (!parent.empty() && !fs::exists(parent, ec))
-    {
-        if (!fs::create_directories(parent, ec))
-        {
-            std::fprintf(stderr, "[AMLgsMenu] Failed to create directory '%s': %s\n",
-                         parent.string().c_str(), ec.message().c_str());
-            return false;
-        }
-    }
-    if (fs::exists(target, ec))
-    {
-        return true;
-    }
-
-    if (config_path_ != kDefaultStorageConfigPath)
-    {
-        return true;
-    }
-
-    std::ifstream src(kFlashConfigPath, std::ios::binary);
-    if (!src.is_open())
-    {
-        std::fprintf(stderr, "[AMLgsMenu] Source config '%s' not found\n", kFlashConfigPath);
-        return false;
-    }
-    std::ofstream dst(config_path_, std::ios::binary | std::ios::trunc);
-    if (!dst.is_open())
-    {
-        std::fprintf(stderr, "[AMLgsMenu] Failed to open '%s' for writing\n", config_path_.c_str());
-        return false;
-    }
-    dst << src.rdbuf();
-    if (!dst.good())
-    {
-        std::fprintf(stderr, "[AMLgsMenu] Failed to copy config to '%s'\n", config_path_.c_str());
-        return false;
-    }
-    return true;
+    return config_.EnsureWritable();
 }
 
 void Application::StartRemoteSync()
 {
-    remote_sync_request_flag_.store(true, std::memory_order_release);
-    if (!command_runner_active_)
+    if (remote_sync_)
     {
-        EnsureCommandRunnerForRemoteSync();
+        remote_sync_->RequestSync();
     }
-    MaybeLaunchRemoteSyncJob();
 }
 
-void Application::MaybeLaunchRemoteSyncJob()
-{
-    if (!cmd_runner_ || !command_runner_active_)
-    {
-        return;
-    }
-    if (!remote_sync_request_flag_.load(std::memory_order_acquire))
-    {
-        return;
-    }
-    bool expected = false;
-    if (!remote_sync_inflight_.compare_exchange_strong(expected, true))
-    {
-        return;
-    }
-    auto transport = AcquireTransport();
-    if (!transport)
-    {
-        remote_sync_inflight_.store(false, std::memory_order_release);
-        return;
-    }
-    remote_sync_request_flag_.store(false, std::memory_order_release);
-    cmd_runner_->EnqueueRemote([this, transport]()
-                               {
-        if (auto udp = std::dynamic_pointer_cast<UdpCommandClient>(transport))
-        {
-            if (CollectRemoteStateAsync(udp))
-            {
-                return;
-            }
-        }
-
-        RemoteStateSnapshot snapshot{};
-        if (CollectRemoteState(snapshot, transport))
-        {
-            std::lock_guard<std::mutex> lock(remote_state_mutex_);
-            pending_remote_state_ = snapshot;
-            remote_sync_ready_ = true;
-        }
-        remote_sync_inflight_.store(false, std::memory_order_release);
-        MaybeLaunchRemoteSyncJob(); });
-}
-
-void Application::EnsureCommandRunnerForRemoteSync()
+bool Application::EnsureCommandRunnerForRemoteSync()
 {
     if (!cmd_runner_)
     {
-        return;
+        return false;
     }
     if (!command_runner_active_)
     {
         cmd_runner_->Start();
         command_runner_active_ = true;
     }
-}
-
-void Application::DrainRemoteState()
-{
-    RemoteStateSnapshot snapshot{};
-    bool apply = false;
-    {
-        std::lock_guard<std::mutex> lock(remote_state_mutex_);
-        if (remote_sync_ready_)
-        {
-            snapshot = pending_remote_state_;
-            remote_sync_ready_ = false;
-            apply = true;
-        }
-    }
-    if (apply)
-    {
-        ApplyRemoteStateSnapshot(snapshot);
-    }
-
-}
-
-bool Application::FillRemoteSnapshotFromMap(const std::unordered_map<std::string, std::string> &values,
-                                            RemoteStateSnapshot &snapshot)
-{
-    auto try_parse_int = [](const std::string &text, int &value) -> bool
-    {
-        try
-        {
-            value = std::stoi(text);
-            return true;
-        }
-        catch (const std::exception &)
-        {
-            return false;
-        }
-    };
-
-    bool any = false;
-    auto batch_values = values;
-
-    std::string value;
-    if (!batch_values["channel"].empty())
-    {
-        value = batch_values["channel"];
-        int ch = 0;
-        if (try_parse_int(value, ch))
-        {
-            snapshot.has_channel = true;
-            snapshot.channel = ch;
-            any = true;
-        }
-    }
-    if (!batch_values["bandwidth"].empty())
-    {
-        value = batch_values["bandwidth"];
-        int bw = 0;
-        if (try_parse_int(value, bw))
-        {
-            snapshot.has_bandwidth = true;
-            snapshot.bandwidth = bw;
-            any = true;
-        }
-    }
-    if (!batch_values["sky_power"].empty())
-    {
-        value = batch_values["sky_power"];
-        int p = 0;
-        if (try_parse_int(value, p))
-        {
-            snapshot.has_power = true;
-            snapshot.power = p;
-            any = true;
-        }
-    }
-    if (!batch_values["sky_mcs"].empty())
-    {
-        value = batch_values["sky_mcs"];
-        int mcs = 0;
-        if (try_parse_int(value, mcs))
-        {
-            snapshot.has_mcs = true;
-            snapshot.mcs = mcs;
-            any = true;
-        }
-    }
-    if (!batch_values["bitrate"].empty())
-    {
-        value = batch_values["bitrate"];
-        int kbps = 0;
-        if (try_parse_int(value, kbps))
-        {
-            snapshot.has_bitrate = true;
-            snapshot.bitrate_kbps = kbps;
-            any = true;
-        }
-    }
-    std::string size_value;
-    std::string fps_value;
-    bool have_size = false;
-    bool have_fps = false;
-    auto it_size = batch_values.find("sky_size");
-    if (it_size != batch_values.end())
-    {
-        size_value = it_size->second;
-        have_size = !size_value.empty();
-    }
-    auto it_fps = batch_values.find("sky_fps");
-    if (it_fps != batch_values.end())
-    {
-        fps_value = it_fps->second;
-        have_fps = !fps_value.empty();
-    }
-    if (have_size && have_fps)
-    {
-        int width = 0;
-        int height = 0;
-        int fps = 0;
-        if (std::sscanf(size_value.c_str(), "%dx%d", &width, &height) == 2 && try_parse_int(fps_value, fps))
-        {
-            snapshot.has_sky_mode = true;
-            snapshot.width = width;
-            snapshot.height = height;
-            snapshot.fps = fps;
-            any = true;
-        }
-    }
-    return any;
-}
-
-bool Application::CollectRemoteState(RemoteStateSnapshot &snapshot,
-                                     const std::shared_ptr<CommandTransport> &transport)
-{
-    if (!transport)
-    {
-        return false;
-    }
-    std::unordered_map<std::string, std::string> batch_values;
-    std::string batch_cmd;
-    const std::vector<std::string> keys = {"channel", "bandwidth", "sky_power", "sky_mcs",
-                                           "bitrate", "sky_size", "sky_fps"};
-    for (const auto &key : keys)
-    {
-        auto cmd = command_templates_.Render("remote_query", key, {});
-        if (cmd.empty())
-            continue;
-        if (!batch_cmd.empty())
-            batch_cmd.append(" ; ");
-        batch_cmd.append("echo __key__");
-        batch_cmd.append(key);
-        batch_cmd.append(" ; ");
-        batch_cmd.append(cmd);
-    }
-    if (batch_cmd.empty())
-        return false;
-    std::vector<std::string> response;
-    if (!transport->SendWithReply(batch_cmd, response, 1500))
-        return false;
-    std::string current_key;
-    for (const auto &line : response)
-    {
-        auto trimmed = TrimCopy(line);
-        if (trimmed.empty() || trimmed == "timeout")
-            continue;
-        if (trimmed.rfind("__key__", 0) == 0)
-        {
-            current_key = trimmed.substr(7);
-            continue;
-        }
-        if (!current_key.empty() && batch_values.find(current_key) == batch_values.end())
-        {
-            batch_values[current_key] = trimmed;
-        }
-    }
-    if (batch_values.empty())
-        return false;
-    return FillRemoteSnapshotFromMap(batch_values, snapshot);
-}
-
-bool Application::CollectRemoteStateAsync(const std::shared_ptr<UdpCommandClient> &transport)
-{
-    if (!transport)
-        return false;
-    std::string batch_cmd;
-    const std::vector<std::string> keys = {"channel", "bandwidth", "sky_power", "sky_mcs",
-                                           "bitrate", "sky_size", "sky_fps"};
-    for (const auto &key : keys)
-    {
-        auto cmd = command_templates_.Render("remote_query", key, {});
-        if (cmd.empty())
-            continue;
-        if (!batch_cmd.empty())
-            batch_cmd.append(" ; ");
-        batch_cmd.append("echo __key__");
-        batch_cmd.append(key);
-        batch_cmd.append(" ; ");
-        batch_cmd.append(cmd);
-    }
-    if (batch_cmd.empty())
-        return false;
-
-    return transport->SendWithReplyAsync(
-        batch_cmd, keys,
-        [this](const std::unordered_map<std::string, std::string> &values, bool ok)
-        {
-            if (ok)
-            {
-                RemoteStateSnapshot snapshot{};
-                if (FillRemoteSnapshotFromMap(values, snapshot))
-                {
-                    std::lock_guard<std::mutex> lock(remote_state_mutex_);
-                    pending_remote_state_ = snapshot;
-                    remote_sync_ready_ = true;
-                }
-            }
-            remote_sync_inflight_.store(false, std::memory_order_release);
-            MaybeLaunchRemoteSyncJob();
-        },
-        1500);
-}
-
-void Application::ApplyRemoteStateSnapshot(const RemoteStateSnapshot &snapshot)
-{
-    if (!menu_state_)
-        return;
-    const bool notify_prev = menu_state_->NotifyEnabled();
-    menu_state_->SetNotifyEnabled(false);
-    if (snapshot.has_channel)
-    {
-        int idx = FindChannelIndex(snapshot.channel);
-        if (idx >= 0)
-        {
-            menu_state_->SetChannelIndex(idx);
-            config_kv_["channel"] = std::to_string(snapshot.channel);
-            std::fprintf(stdout, "[AMLgsMenu] Remote channel synced: %d\n", snapshot.channel);
-        }
-    }
-    if (snapshot.has_bandwidth)
-    {
-        int bw = snapshot.bandwidth;
-        int idx = -1;
-        if (bw == 10)
-            idx = 0;
-        else if (bw == 20)
-            idx = 1;
-        else if (bw == 40)
-            idx = 2;
-        if (idx >= 0)
-        {
-            menu_state_->SetBandwidthIndex(idx);
-            config_kv_["bandwidth"] = std::to_string(bw);
-            std::fprintf(stdout, "[AMLgsMenu] Remote bandwidth synced: %d MHz\n", bw);
-        }
-    }
-    if (snapshot.has_power)
-    {
-        int idx = FindPowerIndex(snapshot.power);
-        if (idx >= 0)
-        {
-            menu_state_->SetSkyPowerIndex(idx);
-            std::fprintf(stdout, "[AMLgsMenu] Remote TX power synced: %d\n", snapshot.power);
-        }
-    }
-    if (snapshot.has_mcs)
-    {
-        int idx = FindMcsIndex(snapshot.mcs);
-        if (idx >= 0)
-        {
-            menu_state_->SetSkyMcsIndex(idx);
-            std::fprintf(stdout, "[AMLgsMenu] Remote MCS synced: %d\n", snapshot.mcs);
-        }
-    }
-    if (snapshot.has_bitrate)
-    {
-        int kbps = snapshot.bitrate_kbps;
-        int mbps = static_cast<int>(std::round(static_cast<double>(kbps) / 1024.0));
-        if (mbps < 1)
-            mbps = 1;
-        int idx = FindBitrateIndex(mbps);
-        if (idx >= 0)
-        {
-            menu_state_->SetBitrateIndex(idx);
-            std::fprintf(stdout, "[AMLgsMenu] Remote bitrate synced: %d kbps\n", kbps);
-        }
-    }
-    if (snapshot.has_sky_mode)
-    {
-        int idx = FindSkyModeIndex(snapshot.width, snapshot.height, snapshot.fps);
-        if (idx >= 0)
-        {
-            menu_state_->SetSkyModeIndex(idx);
-            std::fprintf(stdout, "[AMLgsMenu] Remote sky mode synced: %dx%d @ %dHz\n",
-                         snapshot.width, snapshot.height, snapshot.fps);
-        }
-    }
-    menu_state_->SetNotifyEnabled(notify_prev);
-}
-
-bool Application::QueryRemoteValue(const std::string &key, std::string &out,
-                                   const std::shared_ptr<CommandTransport> &transport)
-{
-    if (!transport)
-        return false;
-    if (std::dynamic_pointer_cast<UdpCommandClient>(transport))
-        return false;
-    auto cmd = command_templates_.Render("remote_query", key, {});
-    if (cmd.empty())
-        return false;
-    std::vector<std::string> response;
-    if (!transport->SendWithReply(cmd, response, 1000))
-        return false;
-    for (const auto &line : response)
-    {
-        auto trimmed = TrimCopy(line);
-        if (trimmed.empty())
-            continue;
-        if (trimmed == "timeout")
-            continue;
-        out = trimmed;
-        return true;
-    }
-    return false;
+    return true;
 }
 
 void Application::SaveConfigValue(const std::string &key, const std::string &value)
 {
-    config_kv_[key] = value;
-    const std::string tmp = config_path_ + ".tmp" + std::to_string(std::rand());
-
-    {
-        std::ofstream file(tmp, std::ios::trunc);
-        if (!file.is_open())
-            return;
-
-        for (const auto &kv : config_kv_)
-            file << kv.first << "=" << kv.second << "\n";
-    }
-    std::rename(tmp.c_str(), config_path_.c_str());
-    // configUpdated_ = true;
+    config_.SaveValue(key, value);
 }
 
 void Application::SaveConfig()
 {
-    // std::cout << "[AMLgsMenu] Saving config to " << config_path_ << " " << configUpdated_ << std::endl;
-    if (configUpdated_)
-    {
-        const std::string tmp = config_path_ + ".tmp";
-
-        {
-            std::ofstream file(tmp, std::ios::trunc);
-            if (!file.is_open())
-                return;
-
-            for (const auto &kv : config_kv_)
-                file << kv.first << "=" << kv.second << "\n";
-        }
-        std::rename(tmp.c_str(), config_path_.c_str());
-    }
-    configUpdated_ = false;
-}
-
-int Application::FindChannelIndex(int channel_val) const
-{
-    const auto &chs = menu_state_->Channels();
-    for (size_t i = 0; i < chs.size(); ++i)
-    {
-        if (chs[i] == channel_val)
-            return static_cast<int>(i);
-    }
-    return -1;
-}
-
-int Application::FindPowerIndex(int power_val) const
-{
-    const auto &pwr = menu_state_->PowerLevels();
-    for (size_t i = 0; i < pwr.size(); ++i)
-    {
-        if (pwr[i] == power_val)
-            return static_cast<int>(i);
-    }
-    return -1;
-}
-
-int Application::FindMcsIndex(int mcs_val) const
-{
-    const auto &mcs = menu_state_->McsLevels();
-    for (size_t i = 0; i < mcs.size(); ++i)
-    {
-        if (mcs[i] == mcs_val)
-            return static_cast<int>(i);
-    }
-    return -1;
-}
-
-int Application::FindGroundModeIndex(const std::string &label) const
-{
-    const auto &modes = menu_state_->GroundModes();
-    for (size_t i = 0; i < modes.size(); ++i)
-    {
-        if (modes[i].label == label)
-            return static_cast<int>(i);
-    }
-    return -1;
-}
-
-int Application::FindSkyModeIndex(int width, int height, int refresh) const
-{
-    const auto &modes = menu_state_->SkyModes();
-    for (size_t i = 0; i < modes.size(); ++i)
-    {
-        if (modes[i].width == width && modes[i].height == height && modes[i].refresh == refresh)
-        {
-            return static_cast<int>(i);
-        }
-    }
-    return -1;
-}
-
-int Application::FindBitrateIndex(int bitrate_mbps) const
-{
-    const auto &bitrates = menu_state_->Bitrates();
-    for (size_t i = 0; i < bitrates.size(); ++i)
-    {
-        if (bitrates[i] == bitrate_mbps)
-            return static_cast<int>(i);
-    }
-    return -1;
+    config_.SaveAll();
 }
 
 void Application::ApplyLanguageToImGui(MenuState::Language lang)
 {
     // Font loading already follows -t 参数或默认字体，不在语言切换时重建，避免丢失用户指定字体。
     (void)lang;
-}
-
-int Application::LibinputOpen(const char *path, int flags, void *user_data)
-{
-    (void)user_data;
-    return open(path, flags | O_NONBLOCK);
-}
-
-void Application::LibinputClose(int fd, void *user_data)
-{
-    (void)user_data;
-    if (fd >= 0)
-    {
-        close(fd);
-    }
 }

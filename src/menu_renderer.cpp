@@ -111,12 +111,17 @@ MenuRenderer::MenuRenderer(MenuState &state, bool &use_mock, std::function<Telem
                            std::function<bool()> terminal_visible,
                            std::function<void(const std::string &)> start_update,
                            std::function<int()> update_status,
-                           std::function<void()> request_reboot)
+                           std::function<void()> request_reboot,
+                           std::function<bool(const std::string &, const std::string &)> apply_wifi_client,
+                           std::string wifi_client_ssid, std::string wifi_client_password)
     : state_(state), use_mock_(use_mock), telemetry_provider_(std::move(provider)),
       toggle_terminal_(std::move(toggle_terminal)), terminal_visible_(std::move(terminal_visible)),
       start_update_(std::move(start_update)), update_status_(std::move(update_status)),
-      request_reboot_(std::move(request_reboot))
+      request_reboot_(std::move(request_reboot)),
+      apply_wifi_client_(std::move(apply_wifi_client))
 {
+    std::snprintf(wifi_client_ssid_, sizeof(wifi_client_ssid_), "%s", wifi_client_ssid.c_str());
+    std::snprintf(wifi_client_password_, sizeof(wifi_client_password_), "%s", wifi_client_password.c_str());
     int w = 0, h = 0;
     const char *icon_base = "/storage/digitalfpv/icons/";
     LoadIcon(std::string(icon_base + std::string("antenna.png")).c_str(), icon_antenna_, w, h);
@@ -689,9 +694,11 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
     const float base_font_size = 26.0f;
     const float font_scale = ImGui::GetFontSize() / base_font_size;
     const float menu_height_scale = std::min(1.15f, std::max(1.0f, font_scale));
-    const float menu_height_ratio = 0.70f + (menu_height_scale - 1.0f) * 0.45f;
+    const float extra_row_height = 0.08f; // increase height for extra rows
+    const float menu_height_ratio = 0.70f + (menu_height_scale - 1.0f) * 0.45f + extra_row_height;
     const ImVec2 menu_size = ImVec2(viewport->Size.x * 0.54f, viewport->Size.y * menu_height_ratio);
-    const float menu_pos_y_ratio = std::max(0.10f, 0.16f - (menu_height_ratio - 0.70f) * 0.5f);
+    // Slightly raise the menu vertically (reduce the base ratio from 0.16 to 0.14)
+    const float menu_pos_y_ratio = std::max(0.10f, 0.14f - (menu_height_ratio - 0.70f) * 0.5f);
     const ImVec2 menu_pos = ImVec2(viewport->Pos.x + viewport->Size.x * 0.23f,
                                    viewport->Pos.y + viewport->Size.y * menu_pos_y_ratio);
     const bool is_cn = state_.GetLanguage() == MenuState::Language::CN;
@@ -1028,6 +1035,68 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
 
             const auto &buffer_levels = state_.BufferLevels();
             const auto &hdmi_attrs = state_.HdmiAttrs();
+            const auto &network_modes = state_.NetworkModes();
+            auto render_hdmi_attr = [&]
+            {
+                if (hdmi_attrs.empty())
+                {
+                    ImGui::TextUnformatted("--");
+                    return;
+                }
+                register_focus(1, [&]
+                {
+                    int idx = state_.HdmiAttrIndex();
+                    if (idx < 0 || idx >= static_cast<int>(hdmi_attrs.size()))
+                        idx = 0;
+                    const std::string value = hdmi_attrs[idx];
+                    const char *label = nullptr;
+                    if (value == "rgb")
+                    {
+                        label = "RGB";
+                    }
+                    else if (value == "422")
+                    {
+                        label = "YUV422";
+                    }
+                    else
+                    {
+                        label = "YUV420";
+                    }
+                    if (ImGui::BeginCombo("##hdmi_attr", label))
+                    {
+                        for (int i = 0; i < static_cast<int>(hdmi_attrs.size()); ++i)
+                        {
+                            const std::string item_value = hdmi_attrs[i];
+                            const char *item_label = nullptr;
+                            if (item_value == "rgb")
+                            {
+                                item_label = "RGB";
+                            }
+                            else if (item_value == "422")
+                            {
+                                item_label = "YUV422";
+                            }
+                            else
+                            {
+                                item_label = "YUV420";
+                            }
+                            bool selected = (idx == i);
+                            if (ImGui::Selectable(item_label, selected))
+                            {
+                                if (i != idx)
+                                {
+                                    pending_hdmi_attr_index_ = i;
+                                    pending_hdmi_attr_value_ = item_value;
+                                    hdmi_attr_popup_pending_ = true;
+                                }
+                            }
+                            if (selected)
+                                ImGui::SetItemDefaultFocus();
+                        }
+                        ImGui::EndCombo();
+                    }
+                });
+            };
             row_pair(is_cn ? "\u7f13\u5b58\u7ea7\u522b" : "Buffer Level", [&]
                      {
                          if (buffer_levels.empty())
@@ -1060,59 +1129,39 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
                              }
                          });
                      },
-                     is_cn ? "HDMI\u8272\u5f69\u683c\u5f0f" : "HDMI colorspace",
+                     is_cn ? "\u7f51\u7edc\u6a21\u5f0f" : "Network mode",
                      [&]
                      {
-                            if (hdmi_attrs.empty())
+                            if (network_modes.empty())
                             {
                                 ImGui::TextUnformatted("--");
                                 return;
                             }
                             register_focus(1, [&]
                             {
-                                int idx = state_.HdmiAttrIndex();
-                                if (idx < 0 || idx >= static_cast<int>(hdmi_attrs.size()))
+                                int idx = state_.NetworkModeIndex();
+                                if (idx < 0 || idx >= static_cast<int>(network_modes.size()))
                                     idx = 0;
-                                const std::string value = hdmi_attrs[idx];
-                                const char *label = nullptr;
-                                if (value == "rgb")
+                                const char *label = (idx == static_cast<int>(MenuState::NetworkMode::ConnectAp))
+                                                        ? (is_cn ? "\u8fde\u63a5\u70ed\u70b9" : "Connect AP")
+                                                        : "WFB";
+                                if (ImGui::BeginCombo("##network_mode", label))
                                 {
-                                    label = "RGB";
-                                }
-                                else if (value == "422")
-                                {
-                                    label = "YUV422";
-                                }
-                                else
-                                {
-                                    label = "YUV420";
-                                }
-                                if (ImGui::BeginCombo("##hdmi_attr", label))
-                                {
-                                    for (int i = 0; i < static_cast<int>(hdmi_attrs.size()); ++i)
+                                    for (int i = 0; i < static_cast<int>(network_modes.size()); ++i)
                                     {
-                                        const std::string item_value = hdmi_attrs[i];
-                                        const char *item_label = nullptr;
-                                        if (item_value == "rgb")
-                                        {
-                                            item_label = "RGB";
-                                        }
-                                        else if (item_value == "422")
-                                        {
-                                            item_label = "YUV422";
-                                        }
-                                        else
-                                        {
-                                            item_label = "YUV420";
-                                        }
+                                        const char *item_label = (i == static_cast<int>(MenuState::NetworkMode::ConnectAp))
+                                                                     ? (is_cn ? "\u8fde\u63a5\u70ed\u70b9" : "Connect AP")
+                                                                     : "WFB";
                                         bool selected = (idx == i);
                                         if (ImGui::Selectable(item_label, selected))
                                         {
-                                            if (i != idx)
+                                            if (i == static_cast<int>(MenuState::NetworkMode::ConnectAp))
                                             {
-                                                pending_hdmi_attr_index_ = i;
-                                                pending_hdmi_attr_value_ = item_value;
-                                                hdmi_attr_popup_pending_ = true;
+                                                wifi_client_popup_pending_ = true;
+                                            }
+                                            else if (i != idx)
+                                            {
+                                                state_.SetNetworkModeIndex(i);
                                             }
                                         }
                                         if (selected)
@@ -1144,16 +1193,16 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
                              ImGui::EndCombo();
                          } }); });
 
+
+
             row_pair("", [&]
                      { register_focus(0, [&]
                        {
-                         const bool is_official = state_.GetFirmwareType() == MenuState::FirmwareType::Official;
-                         if (ImGui::RadioButton(is_cn ? "\u5b98\u65b9 (SSH)" : "Official (SSH)", is_official)) {
-                             state_.SetFirmwareType(MenuState::FirmwareType::Official);
-                         }
-                       }); }, "", [&]
-                     { ImGui::Dummy(ImVec2(-1, 0)); });
-
+                           const bool is_official = state_.GetFirmwareType() == MenuState::FirmwareType::Official;
+                           if (ImGui::RadioButton(is_cn ? "\u5b98\u65b9 (SSH)" : "Official (SSH)", is_official)) {
+                               state_.SetFirmwareType(MenuState::FirmwareType::Official);
+                           }
+                       }); }, is_cn ? "HDMI\u8272\u5f69\u683c\u5f0f" : "HDMI colorspace", render_hdmi_attr);
             row_pair("",
                      [&]
                      {
@@ -1248,7 +1297,14 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
             row_pair("",
                      [&]
                      {
-                        ImGui::Dummy(ImVec2(-1, 0));
+                        register_focus(0, [&]
+                        {
+                            const char *label = is_cn ? "\u7f16\u8f91\u70ed\u70b9\u914d\u7f6e" : "Edit AP Config";
+                            if (ImGui::Button(label, ImVec2(-1, 0)))
+                            {
+                                wifi_client_popup_pending_ = true;
+                            }
+                        });
                      },
                      "",
                      [&]
@@ -1341,6 +1397,16 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
         {
             ImGui::OpenPopup("confirm_hdmi_attr_persist");
             hdmi_attr_persist_popup_pending_ = false;
+        }
+        if (wifi_client_popup_pending_)
+        {
+            ImGui::OpenPopup("configure_wifi_client");
+            wifi_client_popup_pending_ = false;
+        }
+        if (wifi_client_error_popup_pending_)
+        {
+            ImGui::OpenPopup("wifi_client_error");
+            wifi_client_error_popup_pending_ = false;
         }
 
         ImGui::SetNextWindowSize(ImVec2(420.0f, 0), ImGuiCond_FirstUseEver);
@@ -1498,6 +1564,83 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
                 state_.ForceHdmiAttrNotifyOnce();
                 state_.SetHdmiAttrIndex(state_.HdmiAttrIndex());
                 pending_hdmi_attr_value_.clear();
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+
+        ImGui::SetNextWindowSize(ImVec2(520.0f, 0), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + viewport->Size.x * 0.5f,
+                                       viewport->Pos.y + viewport->Size.y * 0.5f),
+                                ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+        if (ImGui::BeginPopupModal("configure_wifi_client", nullptr,
+                                   ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar))
+        {
+            const char *title = is_cn ? "\u8fde\u63a5\u70ed\u70b9" : "Connect AP";
+            const char *ssid_label = is_cn ? "\u70ed\u70b9\u540d" : "SSID";
+            const char *password_label = is_cn ? "\u70ed\u70b9\u5bc6\u7801" : "Password";
+            const char *msg = is_cn ? "\u586b\u5199\u8981\u8fde\u63a5\u7684\u70ed\u70b9\u540d\u548c\u5bc6\u7801\uff0c\u786e\u8ba4\u540e\u4f1a\u5207\u6362\u5230\u8fde\u63a5\u70ed\u70b9\u6a21\u5f0f\u3002"
+                                    : "Enter the target hotspot SSID and password. Confirming will switch to Connect AP mode.";
+            ImGui::TextUnformatted(title);
+            ImGui::Spacing();
+            ImGui::TextWrapped("%s", msg);
+            ImGui::Spacing();
+ImGui::PushItemWidth(320.0f);
+// Draw label and input separately to avoid label being placed on the right side of the input box.
+ImGui::Text(ssid_label);
+ImGui::SameLine();
+ImGui::InputText("##ssid", wifi_client_ssid_, sizeof(wifi_client_ssid_));
+ImGui::Text(password_label);
+ImGui::SameLine();
+ImGui::InputText("##password", wifi_client_password_, sizeof(wifi_client_password_), ImGuiInputTextFlags_Password);
+ImGui::PopItemWidth();
+            ImGui::Spacing();
+
+            const float button_width = 130.0f;
+            const float spacing = ImGui::GetStyle().ItemSpacing.x;
+            const float total_width = button_width * 2.0f + spacing;
+            const float region_width = ImGui::GetContentRegionAvail().x;
+            const float base_x = ImGui::GetCursorPosX();
+            if (region_width > total_width)
+            {
+                ImGui::SetCursorPosX(base_x + (region_width - total_width) * 0.5f);
+            }
+            if (ImGui::Button(is_cn ? "\u53d6\u6d88" : "Cancel", ImVec2(button_width, 0)))
+            {
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button(is_cn ? "\u786e\u8ba4" : "Confirm", ImVec2(button_width, 0)))
+            {
+                const std::string ssid = wifi_client_ssid_;
+                const std::string password = wifi_client_password_;
+                if (apply_wifi_client_ && apply_wifi_client_(ssid, password))
+                {
+                    state_.ForceNetworkModeNotifyOnce();
+                    state_.SetNetworkModeIndex(static_cast<int>(MenuState::NetworkMode::ConnectAp));
+                    ImGui::CloseCurrentPopup();
+                }
+                else
+                {
+                    wifi_client_error_popup_pending_ = true;
+                }
+            }
+            ImGui::EndPopup();
+        }
+
+        ImGui::SetNextWindowSize(ImVec2(360.0f, 0), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + viewport->Size.x * 0.5f,
+                                       viewport->Pos.y + viewport->Size.y * 0.5f),
+                                ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+        if (ImGui::BeginPopupModal("wifi_client_error", nullptr,
+                                   ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar))
+        {
+            const char *msg = is_cn ? "\u4fdd\u5b58\u8fde\u63a5\u70ed\u70b9\u914d\u7f6e\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5 SSID \u548c\u5bc6\u7801\u3002"
+                                    : "Failed to save the hotspot configuration. Check the SSID and password.";
+            ImGui::TextWrapped("%s", msg);
+            ImGui::Spacing();
+            if (ImGui::Button(is_cn ? "\u786e\u5b9a" : "OK", ImVec2(120.0f, 0)))
+            {
                 ImGui::CloseCurrentPopup();
             }
             ImGui::EndPopup();

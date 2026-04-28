@@ -117,6 +117,18 @@ void MenuState::SetBitrateIndex(int index)
     NotifyChange(SettingType::Bitrate);
 }
 
+void MenuState::SetNetworkModeIndex(int index)
+{
+    const bool force_notify = force_network_mode_notify_once_;
+    if (!force_notify && network_mode_index_ == index)
+    {
+        return;
+    }
+    network_mode_index_ = index;
+    force_network_mode_notify_once_ = false;
+    NotifyChange(SettingType::NetworkMode);
+}
+
 void MenuState::SetSkyMcsIndex(int index)
 {
     if (sky_mcs_index_ == index)
@@ -216,6 +228,11 @@ bool MenuState::ConsumeHdmiAttrForceSaveOnce()
 void MenuState::ForceHdmiAttrNotifyOnce()
 {
     force_hdmi_attr_notify_once_ = true;
+}
+
+void MenuState::ForceNetworkModeNotifyOnce()
+{
+    force_network_mode_notify_once_ = true;
 }
 
 void MenuState::SetBadFrameIndex(int index)

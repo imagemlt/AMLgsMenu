@@ -60,7 +60,9 @@ public:
                  std::function<void()> toggle_terminal = {}, std::function<bool()> terminal_visible = {},
                  std::function<void(const std::string &)> start_update = {},
                  std::function<int()> update_status = {},
-                 std::function<void()> request_reboot = {});
+                 std::function<void()> request_reboot = {},
+                 std::function<bool(const std::string &, const std::string &)> apply_wifi_client = {},
+                 std::string wifi_client_ssid = {}, std::string wifi_client_password = {});
     ~MenuRenderer();
 
     void Render(bool &running_flag);
@@ -91,6 +93,9 @@ private:
     std::function<void(const std::string &)> start_update_;
     std::function<int()> update_status_;
     std::function<void()> request_reboot_;
+    std::function<bool(const std::string &, const std::string &)> apply_wifi_client_;
+    char wifi_client_ssid_[128]{};
+    char wifi_client_password_[128]{};
     int pending_focus_index_ = -1;
     int last_focus_index_ = -1;
     std::array<std::vector<int>, 2> last_focus_columns_{};
@@ -107,6 +112,8 @@ private:
     std::string pending_hdmi_attr_value_;
     bool hdmi_attr_popup_pending_ = false;
     bool hdmi_attr_persist_popup_pending_ = false;
+    bool wifi_client_popup_pending_ = false;
+    bool wifi_client_error_popup_pending_ = false;
     bool update_popup_pending_ = false;
     bool update_missing_popup_pending_ = false;
     bool update_failed_popup_pending_ = false;
