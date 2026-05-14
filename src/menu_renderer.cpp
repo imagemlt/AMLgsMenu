@@ -1585,15 +1585,27 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
             ImGui::Spacing();
             ImGui::TextWrapped("%s", msg);
             ImGui::Spacing();
-ImGui::PushItemWidth(320.0f);
-// Draw label and input separately to avoid label being placed on the right side of the input box.
-ImGui::Text(ssid_label);
-ImGui::SameLine();
-ImGui::InputText("##ssid", wifi_client_ssid_, sizeof(wifi_client_ssid_));
-ImGui::Text(password_label);
-ImGui::SameLine();
-ImGui::InputText("##password", wifi_client_password_, sizeof(wifi_client_password_), ImGuiInputTextFlags_Password);
-ImGui::PopItemWidth();
+            const float label_width = is_cn ? 96.0f : 96.0f;
+            const float input_width = 320.0f;
+            if (ImGui::BeginTable("wifi_client_fields", 2,
+                                  ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoSavedSettings))
+            {
+                ImGui::TableSetupColumn("label", ImGuiTableColumnFlags_WidthFixed, label_width);
+                ImGui::TableSetupColumn("input", ImGuiTableColumnFlags_WidthFixed, input_width);
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::TextUnformatted(ssid_label);
+                ImGui::TableSetColumnIndex(1);
+                ImGui::SetNextItemWidth(input_width);
+                ImGui::InputText("##ssid", wifi_client_ssid_, sizeof(wifi_client_ssid_));
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::TextUnformatted(password_label);
+                ImGui::TableSetColumnIndex(1);
+                ImGui::SetNextItemWidth(input_width);
+                ImGui::InputText("##password", wifi_client_password_, sizeof(wifi_client_password_), ImGuiInputTextFlags_Password);
+                ImGui::EndTable();
+            }
             ImGui::Spacing();
 
             const float button_width = 130.0f;
