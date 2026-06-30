@@ -26,6 +26,7 @@ public:
     void SetHooks(AcquireTransportFn acquire_transport,
                   EnsureRunnerFn ensure_runner,
                   EnqueueRemoteFn enqueue_remote);
+    void SetApMode(bool enabled) { ap_mode_ = enabled; }
     void RequestSync();
     void DrainPending();
 
@@ -49,6 +50,7 @@ private:
     };
 
     void MaybeLaunch();
+    bool CollectRemoteStateAp(Snapshot &snapshot, const std::shared_ptr<CommandTransport> &transport);
     bool FillSnapshotFromMap(const std::unordered_map<std::string, std::string> &values, Snapshot &snapshot);
     bool CollectRemoteState(Snapshot &snapshot, const std::shared_ptr<CommandTransport> &transport);
     bool CollectRemoteStateAsync(const std::shared_ptr<UdpCommandClient> &transport);
@@ -73,4 +75,5 @@ private:
     std::mutex pending_mutex_;
     Snapshot pending_snapshot_{};
     bool pending_ready_ = false;
+    bool ap_mode_ = false;
 };

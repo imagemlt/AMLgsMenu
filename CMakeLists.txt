@@ -26,6 +26,7 @@ add_executable(AMLgsMenu
     src/video_mode.cpp
     src/udp_command_client.cpp
     src/ssh_command_client.cpp
+    src/ap_tcp_client.cpp
     src/splash_player.cpp
     src/terminal.cpp
 )

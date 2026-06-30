@@ -35,6 +35,29 @@ void LinkSettingsController::ApplyChannel()
     if (chs.empty())
         return;
     int ch = chs[state_.ChannelIndex()];
+    if (ap_mode_)
+    {
+        if (acquire_transport_ && enqueue_remote_)
+        {
+            if (auto transport = acquire_transport_())
+            {
+                std::string cmd = "set_ap_channel " + std::to_string(ch);
+                enqueue_remote_([transport, cmd]()
+                                {
+                    std::vector<std::string> resp;
+                    if (!transport->SendWithReply(cmd, resp, 2000))
+                    {
+                        std::fprintf(stderr, "[AMLgsMenu] AP set_ap_channel %s failed\n", cmd.c_str());
+                    }
+                    else
+                    {
+                        for (const auto &line : resp)
+                            std::fprintf(stdout, "[AMLgsMenu] AP set_ap_channel resp: %s\n", line.c_str());
+                    } });
+            }
+        }
+        return;
+    }
     if (acquire_transport_ && enqueue_remote_)
     {
         if (auto transport = acquire_transport_())
@@ -57,6 +80,8 @@ void LinkSettingsController::ApplyChannel()
 
 void LinkSettingsController::ApplyBandwidth()
 {
+    if (ap_mode_)
+        return;
     int bw = (state_.BandwidthIndex() == 0) ? 10 : (state_.BandwidthIndex() == 1 ? 20 : 40);
     if (acquire_transport_ && enqueue_remote_)
     {
@@ -335,7 +360,7 @@ void LinkSettingsController::ApplyBadFramePolicy()
         return;
     }
 
-    int value = (state_.BadFrameIndex() == 0) ? 0 : 176;
+    int value = (state_.BadFrameIndex() == 0) ? 0 : 432;
     std::ofstream ofs("/sys/module/amvdec_h265/parameters/error_handle_policy");
     if (!ofs.is_open())
     {

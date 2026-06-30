@@ -75,6 +75,19 @@ void RemoteSyncService::MaybeLaunch()
     request_flag_.store(false, std::memory_order_release);
     enqueue_remote_([this, transport]()
                     {
+        if (ap_mode_)
+        {
+            Snapshot snapshot{};
+            if (CollectRemoteStateAp(snapshot, transport))
+            {
+                std::lock_guard<std::mutex> lock(pending_mutex_);
+                pending_snapshot_ = snapshot;
+                pending_ready_ = true;
+            }
+            inflight_.store(false, std::memory_order_release);
+            MaybeLaunch();
+            return;
+        }
         if (auto udp = std::dynamic_pointer_cast<UdpCommandClient>(transport))
         {
             if (CollectRemoteStateAsync(udp))
@@ -249,6 +262,39 @@ bool RemoteSyncService::CollectRemoteState(Snapshot &snapshot,
     if (batch_values.empty())
         return false;
     return FillSnapshotFromMap(batch_values, snapshot);
+}
+
+namespace {
+int ParseChannelFromResp(const std::string &text)
+{
+    // "channel 36 (5180 MHz)" -> 36
+    // also handle "channel 36" alone
+    int ch = 0;
+    if (std::sscanf(text.c_str(), "channel %d", &ch) == 1)
+        return ch;
+    return -1;
+}
+} // namespace
+
+bool RemoteSyncService::CollectRemoteStateAp(Snapshot &snapshot,
+                                            const std::shared_ptr<CommandTransport> &transport)
+{
+    if (!transport)
+        return false;
+    std::vector<std::string> response;
+    if (!transport->SendWithReply("get_current_ap_channel", response, 2000))
+        return false;
+    for (const auto &line : response)
+    {
+        int ch = ParseChannelFromResp(line);
+        if (ch > 0)
+        {
+            snapshot.has_channel = true;
+            snapshot.channel = ch;
+            return true;
+        }
+    }
+    return false;
 }
 
 bool RemoteSyncService::CollectRemoteStateAsync(const std::shared_ptr<UdpCommandClient> &transport)

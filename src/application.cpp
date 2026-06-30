@@ -8,6 +8,7 @@
 #include "mavlink_receiver.h"
 #include "udp_command_client.h"
 #include "ssh_command_client.h"
+#include "ap_tcp_client.h"
 #include "command_templates.h"
 #include "terminal.h"
 
@@ -52,6 +53,32 @@ std::string ShellEscape(const std::string &value)
 
 Application::Application() = default;
 Application::~Application() { Shutdown(); }
+
+std::string Application::DetectApGateway()
+{
+    std::ifstream route("/proc/net/route");
+    std::string line;
+    while (std::getline(route, line))
+    {
+        std::istringstream iss(line);
+        std::string iface, dest, gw;
+        if (!(iss >> iface >> dest >> gw))
+            continue;
+        if (dest != "00000000")
+            continue;
+        if (gw == "00000000")
+            continue;
+        unsigned int gw_int = 0;
+        if (std::sscanf(gw.c_str(), "%x", &gw_int) != 1)
+            continue;
+        struct in_addr addr;
+        addr.s_addr = gw_int;
+        char buf[INET_ADDRSTRLEN] = {};
+        if (inet_ntop(AF_INET, &addr, buf, sizeof(buf)))
+            return std::string(buf);
+    }
+    return {};
+}
 
 namespace
 {
@@ -295,7 +322,8 @@ bool Application::Initialize(const std::string &font_path, bool use_mock,
         std::fprintf(stderr, "[AMLgsMenu] Warning: failed to prepare config file '%s'\n", config_.ConfigPath().c_str());
     }
     LoadConfig();
-    RebuildTransport(menu_state_->GetFirmwareType());
+    ap_mode_ = (menu_state_->NetworkModeIndex() == static_cast<int>(MenuState::NetworkMode::ConnectAp));
+    RebuildTransport(menu_state_->GetFirmwareType(), ap_mode_);
     settings_controller_ = std::make_unique<LinkSettingsController>(*menu_state_, command_templates_);
     settings_controller_->SetHooks(
         [this]()
@@ -318,6 +346,7 @@ bool Application::Initialize(const std::string &font_path, bool use_mock,
                 std::system(cmd.c_str());
             }
         });
+    settings_controller_->SetApMode(ap_mode_);
     remote_sync_ = std::make_unique<RemoteSyncService>(*menu_state_, command_templates_, config_);
     remote_sync_->SetHooks(
         [this]()
@@ -331,6 +360,7 @@ bool Application::Initialize(const std::string &font_path, bool use_mock,
                 cmd_runner_->EnqueueRemote(std::move(job));
             }
         });
+    remote_sync_->SetApMode(ap_mode_);
     StartRemoteSync();
     ApplyLanguageToImGui(menu_state_->GetLanguage());
     if (!use_mock_)
@@ -464,8 +494,21 @@ bool Application::Initialize(const std::string &font_path, bool use_mock,
             if (settings_controller_) settings_controller_->ApplyBandwidth();
             break;
         case MenuState::SettingType::NetworkMode:
-            SaveConfigValue("ap_mode", menu_state_->NetworkModeIndex() == 1 ? "1" : "0");
-            if (settings_controller_) settings_controller_->ApplyNetworkMode();
+            {
+                ap_mode_ = (menu_state_->NetworkModeIndex() == static_cast<int>(MenuState::NetworkMode::ConnectAp));
+                SaveConfigValue("ap_mode", ap_mode_ ? "1" : "0");
+                RebuildTransport(menu_state_->GetFirmwareType(), ap_mode_);
+                if (settings_controller_)
+                {
+                    settings_controller_->SetApMode(ap_mode_);
+                    settings_controller_->ApplyNetworkMode();
+                }
+                if (remote_sync_)
+                {
+                    remote_sync_->SetApMode(ap_mode_);
+                    RestartRemoteSync();
+                }
+            }
             break;
         case MenuState::SettingType::GroundMode: {
             // update ground_res and clean legacy typo
@@ -567,7 +610,7 @@ bool Application::Initialize(const std::string &font_path, bool use_mock,
             break;
         }
         case MenuState::SettingType::BadFramePolicy: {
-            int value = (menu_state_->BadFrameIndex() == 0) ? 0 : 176;
+            int value = (menu_state_->BadFrameIndex() == 0) ? 0 : 432;
             SaveConfigValue("bad_frame", std::to_string(value));
             if (settings_controller_) settings_controller_->ApplyBadFramePolicy();
             break;
@@ -591,7 +634,7 @@ bool Application::Initialize(const std::string &font_path, bool use_mock,
         case MenuState::SettingType::Firmware: {
             auto mode = menu_state_->GetFirmwareType();
             SaveConfigValue("firmware", mode == MenuState::FirmwareType::CCEdition ? "cc" : "official");
-            RebuildTransport(mode);
+            RebuildTransport(mode, ap_mode_);
             RestartRemoteSync();
             break;
         }
@@ -722,10 +765,24 @@ std::shared_ptr<CommandTransport> Application::AcquireTransport() const
     return transport_;
 }
 
-void Application::RebuildTransport(MenuState::FirmwareType type)
+void Application::RebuildTransport(MenuState::FirmwareType type, bool ap_mode)
 {
     std::shared_ptr<CommandTransport> new_transport;
-    if (type == MenuState::FirmwareType::Official)
+    if (ap_mode)
+    {
+        std::string gw = ap_gateway_.empty() ? DetectApGateway() : ap_gateway_;
+        if (gw.empty())
+        {
+            std::fprintf(stderr, "[AMLgsMenu] AP mode: no gateway detected, remote commands will fail\n");
+        }
+        else
+        {
+            ap_gateway_ = gw;
+            std::fprintf(stdout, "[AMLgsMenu] AP mode: using air_man_ap at %s:12355\n", gw.c_str());
+            new_transport = std::make_shared<ApTcpClient>(gw);
+        }
+    }
+    else if (type == MenuState::FirmwareType::Official)
     {
         new_transport = std::make_shared<SshCommandClient>(ssh_host_, ssh_port_, ssh_user_, ssh_password_);
     }
@@ -738,6 +795,7 @@ void Application::RebuildTransport(MenuState::FirmwareType type)
         transport_ = std::move(new_transport);
         firmware_mode_ = type;
     }
+    ap_mode_ = ap_mode;
 }
 
 void Application::RestartRemoteSync()

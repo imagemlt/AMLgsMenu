@@ -1,6 +1,7 @@
 #pragma once
 
 #include "app_config.h"
+#include "ap_tcp_client.h"
 #include "display_platform.h"
 #include "input_controller.h"
 #include "link_settings_controller.h"
@@ -59,7 +60,8 @@ private:
     void StartFirmwareUpdate(const std::string &path);
     int UpdateStatus() const { return update_status_.load(); }
     void RequestReboot();
-    void RebuildTransport(MenuState::FirmwareType type);
+    void RebuildTransport(MenuState::FirmwareType type, bool ap_mode);
+    static std::string DetectApGateway();
     std::shared_ptr<CommandTransport> AcquireTransport() const;
     void RestartRemoteSync();
     bool EnsureCommandRunnerForRemoteSync();
@@ -97,5 +99,7 @@ private:
     mutable std::mutex transport_mutex_;
 
     AppConfig config_;
+    bool ap_mode_ = false;
+    std::string ap_gateway_;
     std::atomic<int> update_status_{0};
 };

@@ -21,6 +21,8 @@ public:
                   EnqueueRemoteFn enqueue_remote,
                   EnqueueShellFn enqueue_shell);
 
+    void SetApMode(bool enabled) { ap_mode_ = enabled; }
+
     void ApplyChannel();
     void ApplyBandwidth();
     void ApplySkyMode();
@@ -50,4 +52,5 @@ private:
     EnqueueRemoteFn enqueue_remote_;
     EnqueueShellFn enqueue_shell_;
     bool idr_requested_ = false;
+    bool ap_mode_ = false;
 };
