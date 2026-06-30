@@ -26,7 +26,7 @@ public:
     void SetHooks(AcquireTransportFn acquire_transport,
                   EnsureRunnerFn ensure_runner,
                   EnqueueRemoteFn enqueue_remote);
-    void SetApMode(bool enabled) { ap_mode_ = enabled; }
+    void SetApMode(bool enabled) { ap_mode_.store(enabled, std::memory_order_release); }
     void RequestSync();
     void DrainPending();
 
@@ -75,5 +75,5 @@ private:
     std::mutex pending_mutex_;
     Snapshot pending_snapshot_{};
     bool pending_ready_ = false;
-    bool ap_mode_ = false;
+    std::atomic<bool> ap_mode_{false};
 };

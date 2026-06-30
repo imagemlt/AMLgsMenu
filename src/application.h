@@ -61,7 +61,7 @@ private:
     int UpdateStatus() const { return update_status_.load(); }
     void RequestReboot();
     void RebuildTransport(MenuState::FirmwareType type, bool ap_mode);
-    static std::string DetectApGateway();
+    static std::string DetectApGateway(const std::string &prefer_iface = "");
     std::shared_ptr<CommandTransport> AcquireTransport() const;
     void RestartRemoteSync();
     bool EnsureCommandRunnerForRemoteSync();

@@ -54,9 +54,10 @@ std::string ShellEscape(const std::string &value)
 Application::Application() = default;
 Application::~Application() { Shutdown(); }
 
-std::string Application::DetectApGateway()
+std::string Application::DetectApGateway(const std::string &prefer_iface)
 {
     std::ifstream route("/proc/net/route");
+    std::string fallback;
     std::string line;
     while (std::getline(route, line))
     {
@@ -75,9 +76,14 @@ std::string Application::DetectApGateway()
         addr.s_addr = gw_int;
         char buf[INET_ADDRSTRLEN] = {};
         if (inet_ntop(AF_INET, &addr, buf, sizeof(buf)))
-            return std::string(buf);
+        {
+            if (!prefer_iface.empty() && iface == prefer_iface)
+                return std::string(buf);
+            if (fallback.empty())
+                fallback = std::string(buf);
+        }
     }
-    return {};
+    return fallback;
 }
 
 namespace
@@ -770,10 +776,15 @@ void Application::RebuildTransport(MenuState::FirmwareType type, bool ap_mode)
     std::shared_ptr<CommandTransport> new_transport;
     if (ap_mode)
     {
-        std::string gw = ap_gateway_.empty() ? DetectApGateway() : ap_gateway_;
+        std::string wlan = "wlan0";
+        auto it = config_.MutableValues().find("wlan");
+        if (it != config_.MutableValues().end() && !it->second.empty())
+            wlan = it->second;
+        std::string gw = ap_gateway_.empty() ? DetectApGateway(wlan) : ap_gateway_;
         if (gw.empty())
         {
-            std::fprintf(stderr, "[AMLgsMenu] AP mode: no gateway detected, remote commands will fail\n");
+            std::fprintf(stderr, "[AMLgsMenu] AP mode: no gateway detected on '%s', remote commands will fail\n",
+                         wlan.c_str());
         }
         else
         {

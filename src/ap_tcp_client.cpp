@@ -50,8 +50,10 @@ bool ApTcpClient::Execute(const std::string &cmd, std::vector<std::string> *resp
     struct timeval tv;
     tv.tv_sec = timeout_ms / 1000;
     tv.tv_usec = (timeout_ms % 1000) * 1000;
-    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
-    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    if (setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv)) < 0)
+        std::fprintf(stderr, "[AMLgsMenu] ap_tcp setsockopt SO_SNDTIMEO: %s\n", std::strerror(errno));
+    if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0)
+        std::fprintf(stderr, "[AMLgsMenu] ap_tcp setsockopt SO_RCVTIMEO: %s\n", std::strerror(errno));
 
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
@@ -72,12 +74,28 @@ bool ApTcpClient::Execute(const std::string &cmd, std::vector<std::string> *resp
     }
 
     std::string request = cmd + "\n";
-    ssize_t sent = send(fd, request.data(), request.size(), 0);
-    if (sent < 0)
+    size_t total = 0;
+    while (total < request.size())
     {
-        std::fprintf(stderr, "[AMLgsMenu] ap_tcp send failed: %s\n", std::strerror(errno));
-        close(fd);
-        return false;
+        ssize_t sent = send(fd, request.data() + total, request.size() - total, 0);
+        if (sent <= 0)
+        {
+            if (sent == 0)
+            {
+                std::fprintf(stderr, "[AMLgsMenu] ap_tcp send returned 0, connection may be closed\n");
+            }
+            else if (errno == EINTR)
+            {
+                continue;
+            }
+            else
+            {
+                std::fprintf(stderr, "[AMLgsMenu] ap_tcp send failed: %s\n", std::strerror(errno));
+            }
+            close(fd);
+            return false;
+        }
+        total += static_cast<size_t>(sent);
     }
 
     std::string collected;
