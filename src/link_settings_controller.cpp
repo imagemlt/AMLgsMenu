@@ -108,6 +108,33 @@ void LinkSettingsController::ApplySkyMode()
     if (sky_modes.empty())
         return;
     VideoMode mode = sky_modes[state_.SkyModeIndex()];
+    if (ap_mode_)
+    {
+        if (acquire_transport_ && enqueue_remote_)
+        {
+            if (auto transport = acquire_transport_())
+            {
+                int fps = mode.refresh ? mode.refresh : 60;
+                std::string mode_value = std::to_string(mode.width) + "x" +
+                                         std::to_string(mode.height) + "p" +
+                                         std::to_string(fps);
+                std::string cmd = "set_simple_video_mode " + mode_value;
+                enqueue_remote_([transport, cmd]()
+                                {
+                    std::vector<std::string> resp;
+                    if (!transport->SendWithReply(cmd, resp, 5000))
+                    {
+                        std::fprintf(stderr, "[AMLgsMenu] AP %s failed\n", cmd.c_str());
+                    }
+                    else
+                    {
+                        for (const auto &line : resp)
+                            std::fprintf(stdout, "[AMLgsMenu] AP sky mode resp: %s\n", line.c_str());
+                    } });
+            }
+        }
+        return;
+    }
     if (acquire_transport_ && enqueue_remote_)
     {
         if (auto transport = acquire_transport_())
