@@ -3,12 +3,12 @@
 透明 OSD 与配置菜单，面向仅有 GLES + fbdev 的 Amlogic 平台。使用 EGL/GLES2 + libinput，ImGui 为子模块；背景全透明，菜单区域不透明。嵌入式终端借鉴自 MIT 许可的 [ImGui-Terminal](https://github.com/nealmick/ImGui-Terminal) 项目，感谢原作者提供的成熟终端模拟器。
 
 ## 特性
-- OSD（MAVLink 或 mock）：地平线、信号强度（dBm）、飞行模式、GPS+离家距离、视频码率/分辨率/刷新率、电池、天空/地面温度。地面天线信号直接从 `wifibroadcast` 服务的 `RX_ANT` 日志中解析，保持与实际天线状态一致，服务缺失时不会崩溃而是沿用上一次值。左上角显示当前 monitor 模式网卡数量：`%d WIFI PLUGGED`（通过 `iw dev` 统计）。
+- OSD（MAVLink 或 mock）：地平线、信号强度（dBm）、飞行模式、GPS+离家距离、视频码率/分辨率/刷新率、电池、天空/地面温度。WFB 模式下地面天线信号和码率直接从 `wifibroadcast` 服务的 `RX_ANT`/`PKT` 日志中解析；`ap_mode=1` 时改为读取 `iw dev <wlan> link` 的 RSSI 与 WiFi 链路码率。左上角显示当前 monitor 模式网卡数量：`%d WIFI PLUGGED`（通过 `iw dev` 统计）。
 - 信道：2.4G 1–13，5G {32,36,40,44,48,52,56,60,64,68,96,100,104,108,112,116,120,124,128,132,136,140,144,149,153,157,161,165,169,173,177}；频宽 10/20/40 MHz。
 - 天空分辨率：1280x720@120，1920x1080@90，1920x1080@60，2240x1260@60，3200x1800@30，3840x2160@20。地面分辨率自动读取 `/sys/class/amhdmitx/amhdmitx0/modes`，无则回退默认。
 - 命令行：`-t 字体.ttf`（推荐粗体全字库）用于 UI，`-T 字体.ttf` 可选指定终端字体，`-m 1` 强制 mock；默认 MAVLink 监听 0.0.0.0:14452 UDP。
 - 命令执行线程常驻后台，会每分钟输出一次 `[CommandExecutor] queue depth: N`，用于观察命令堆积情况（数值过大通常表示远端操作阻塞）。
-- UDP 配置下发（单向）到 127.0.0.1:14650/14651：信道、频宽、天空分辨率/帧率（重启 majestic）、码率（Mbps→kbps）、天空功率（p*50 mBm）。本地 monitor 网卡同步信道/功率，带 HT20/HT40+ 后缀，无 monitor 时跳过。
+- UDP 配置下发（单向）到 127.0.0.1:14650/14651：信道、频宽、天空分辨率/帧率（重启 majestic）、码率（Mbps→kbps）、天空功率（p*50 mBm）。本地信道同步到 monitor 网卡，带 HT20/HT40+ 后缀；本地功率在 WFB 模式设置 monitor 网卡，`ap_mode=1` 时设置配置里的 `wlan` 网卡。
 - 图标默认路径 `/storage/digitalfpv/icons/`（建议透明 48x48 PNG）。文字白色黑描边；菜单不透明，OSD 纯透明背景。
 - 固件传输模式可选：**CC 固件（UDP）** 与 **官方固件（SSH）**。两者共用 `command.cfg`，菜单切换后自动切换到底层传输；SSH 连接 `root@10.5.0.10`（密码 `12345`）。
 - 声音控制：新增“声音开关”复选框（写 `sound=0|1` 到 `wfb.conf` 并通过 UDP 向 127.0.0.1:5612 发送 `sound=1|0`），以及 0–100%（10% 递增）的音量下拉框（调用 `pactl set-sink-volume @DEFAULT_SINK@ XX%` 立即套用 PulseAudio 音量）。

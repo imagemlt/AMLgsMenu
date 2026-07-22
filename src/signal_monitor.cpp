@@ -3,7 +3,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <map>
+#include <optional>
 #include <stdexcept>
 #include <vector>
 
@@ -32,6 +34,13 @@ PacketRateSnapshot SignalMonitor::LatestRate() const
 
 bool SignalMonitor::UpdateSnapshot()
 {
+    bool ap_mode_enabled = false;
+    std::string wlan_name;
+    if (ReadApModeConfig(ap_mode_enabled, wlan_name) && ap_mode_enabled)
+    {
+        return UpdateSnapshotFromApLink();
+    }
+
     FILE *pipe = popen(kJournalCmd, "r");
     if (!pipe)
     {
@@ -151,6 +160,75 @@ bool SignalMonitor::UpdateSnapshot()
     return true;
 }
 
+bool SignalMonitor::UpdateSnapshotFromApLink()
+{
+    bool ap_mode_enabled = false;
+    std::string wlan_name;
+    if (!ReadApModeConfig(ap_mode_enabled, wlan_name) || !ap_mode_enabled)
+    {
+        return false;
+    }
+
+    const std::string cmd = "iw dev " + wlan_name + " link 2>/dev/null";
+    FILE *pipe = popen(cmd.c_str(), "r");
+    if (!pipe)
+    {
+        return false;
+    }
+
+    std::optional<float> signal_dbm;
+    std::optional<float> tx_bitrate_mbps;
+    std::optional<float> rx_bitrate_mbps;
+    char buffer[1024];
+    while (fgets(buffer, sizeof(buffer), pipe))
+    {
+        std::string line = TrimCopy(buffer);
+        if (line.empty() || line == "Not connected.")
+            continue;
+
+        if (!signal_dbm.has_value())
+        {
+            signal_dbm = ParseSignalDbm(line);
+        }
+        if (line.rfind("tx bitrate:", 0) == 0)
+        {
+            tx_bitrate_mbps = ParseBitrateMbps(line);
+        }
+        else if (line.rfind("rx bitrate:", 0) == 0)
+        {
+            rx_bitrate_mbps = ParseBitrateMbps(line);
+        }
+    }
+    pclose(pipe);
+
+    const auto now = std::chrono::steady_clock::now();
+    if (signal_dbm.has_value())
+    {
+        GroundSignalSnapshot snapshot;
+        snapshot.signal_a = *signal_dbm;
+        snapshot.signal_b = *signal_dbm;
+        snapshot.valid = true;
+        snapshot.timestamp = now;
+
+        std::lock_guard<std::mutex> lock(mutex_);
+        latest_ = snapshot;
+    }
+
+    if (tx_bitrate_mbps.has_value() || rx_bitrate_mbps.has_value())
+    {
+        PacketRateSnapshot rate{};
+        rate.primary_mbps = tx_bitrate_mbps.value_or(rx_bitrate_mbps.value_or(0.0f));
+        rate.secondary_mbps = rx_bitrate_mbps.value_or(tx_bitrate_mbps.value_or(0.0f));
+        rate.valid = (rate.primary_mbps > 0.0f || rate.secondary_mbps > 0.0f);
+        rate.timestamp = now;
+
+        std::lock_guard<std::mutex> lock(mutex_);
+        latest_rate_ = rate;
+    }
+
+    return true;
+}
+
 void SignalMonitor::ProcessEntry(pid_t pid, const std::string &message,
                                  std::map<uint64_t, float> &antenna_data,
                                  bool &saw_pkt,
@@ -239,4 +317,103 @@ std::vector<std::string> SignalMonitor::SplitString(const std::string &line, cha
         start = pos + 1;
     }
     return tokens;
+}
+
+std::string SignalMonitor::TrimCopy(const std::string &text)
+{
+    size_t start = 0;
+    while (start < text.size() && (text[start] == ' ' || text[start] == '\t' ||
+                                   text[start] == '\r' || text[start] == '\n'))
+    {
+        ++start;
+    }
+    size_t end = text.size();
+    while (end > start && (text[end - 1] == ' ' || text[end - 1] == '\t' ||
+                           text[end - 1] == '\r' || text[end - 1] == '\n'))
+    {
+        --end;
+    }
+    return text.substr(start, end - start);
+}
+
+bool SignalMonitor::ReadApModeConfig(bool &ap_mode_enabled, std::string &wlan_name)
+{
+    ap_mode_enabled = false;
+    wlan_name = "wlan0";
+
+    const char *paths[] = {"/storage/digitalfpv/wfb.conf", "/flash/wfb.conf"};
+    for (const char *path : paths)
+    {
+        std::ifstream in(path);
+        if (!in.is_open())
+            continue;
+
+        std::string line;
+        while (std::getline(in, line))
+        {
+            line = TrimCopy(line);
+            if (line.empty() || line[0] == '#')
+                continue;
+            auto eq = line.find('=');
+            if (eq == std::string::npos)
+                continue;
+            std::string key = TrimCopy(line.substr(0, eq));
+            std::string value = TrimCopy(line.substr(eq + 1));
+            if (key == "ap_mode")
+            {
+                ap_mode_enabled = (value == "1");
+            }
+            else if (key == "wlan" && !value.empty())
+            {
+                wlan_name = value;
+            }
+        }
+        return true;
+    }
+    return false;
+}
+
+std::optional<float> SignalMonitor::ParseSignalDbm(const std::string &line)
+{
+    if (line.rfind("signal:", 0) != 0)
+        return std::nullopt;
+    std::string value = TrimCopy(line.substr(std::strlen("signal:")));
+    auto pos = value.find(" dBm");
+    if (pos != std::string::npos)
+    {
+        value = value.substr(0, pos);
+    }
+    try
+    {
+        return std::stof(value);
+    }
+    catch (const std::exception &)
+    {
+        return std::nullopt;
+    }
+}
+
+std::optional<float> SignalMonitor::ParseBitrateMbps(const std::string &line)
+{
+    auto colon = line.find(':');
+    if (colon == std::string::npos)
+        return std::nullopt;
+    std::string value = TrimCopy(line.substr(colon + 1));
+    auto unit_pos = value.find(" MBit/s");
+    if (unit_pos == std::string::npos)
+        return std::nullopt;
+    value = value.substr(0, unit_pos);
+    auto first_space = value.find(' ');
+    if (first_space != std::string::npos)
+    {
+        value = value.substr(0, first_space);
+    }
+    try
+    {
+        return std::stof(value);
+    }
+    catch (const std::exception &)
+    {
+        return std::nullopt;
+    }
 }

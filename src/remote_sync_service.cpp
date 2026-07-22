@@ -272,6 +272,8 @@ int ParseChannelFromResp(const std::string &text)
     int ch = 0;
     if (std::sscanf(text.c_str(), "channel %d", &ch) == 1)
         return ch;
+    if (std::sscanf(text.c_str(), "%d", &ch) == 1)
+        return ch;
     return -1;
 }
 } // namespace

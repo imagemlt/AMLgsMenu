@@ -491,20 +491,20 @@ bool AppConfig::LoadInto(MenuState &state, std::string &ssh_password)
     auto it_bad = config_kv_.find("bad_frame");
     if (it_bad != config_kv_.end())
     {
-        int val = 176;
+        int val = 432;
         try
         {
             val = std::stoi(it_bad->second);
         }
         catch (const std::exception &)
         {
-            val = 176;
+            val = 432;
         }
         state.SetBadFrameIndex(val == 0 ? 0 : 1);
     }
     else
     {
-        config_kv_["bad_frame"] = "176";
+        config_kv_["bad_frame"] = "432";
         state.SetBadFrameIndex(1);
     }
 

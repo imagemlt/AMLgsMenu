@@ -9,11 +9,33 @@
 #include <cstring>
 #include <cstdlib>
 #include <fstream>
+#include <numeric>
 #include <string>
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <unordered_map>
+
+namespace {
+std::string BuildApVideoModeName(const VideoMode &mode)
+{
+    const int fps = mode.refresh ? mode.refresh : 60;
+    const int display_height = mode.height;
+
+    if (mode.width > 0 && mode.height > 0)
+    {
+        const int gcd = std::gcd(mode.width, mode.height);
+        const int aspect_w = gcd > 0 ? mode.width / gcd : mode.width;
+        const int aspect_h = gcd > 0 ? mode.height / gcd : mode.height;
+        if (aspect_w == 4 && aspect_h == 3)
+        {
+            return "4:3 " + std::to_string(display_height) + "p " + std::to_string(fps);
+        }
+    }
+
+    return "16:9 " + std::to_string(display_height) + "p " + std::to_string(fps);
+}
+} // namespace
 
 LinkSettingsController::LinkSettingsController(MenuState &state, CommandTemplates &templates)
     : state_(state), templates_(templates)
@@ -45,7 +67,7 @@ void LinkSettingsController::ApplyChannel()
                 enqueue_remote_([transport, cmd]()
                                 {
                     std::vector<std::string> resp;
-                    if (!transport->SendWithReply(cmd, resp, 2000))
+                    if (!transport->SendWithReply(cmd, resp, 30000))
                     {
                         std::fprintf(stderr, "[AMLgsMenu] AP set_ap_channel %s failed\n", cmd.c_str());
                     }
@@ -114,11 +136,8 @@ void LinkSettingsController::ApplySkyMode()
         {
             if (auto transport = acquire_transport_())
             {
-                int fps = mode.refresh ? mode.refresh : 60;
-                std::string mode_value = std::to_string(mode.width) + "x" +
-                                         std::to_string(mode.height) + "p" +
-                                         std::to_string(fps);
-                std::string cmd = "set_simple_video_mode " + mode_value;
+                std::string mode_value = BuildApVideoModeName(mode);
+                std::string cmd = "set_simple_video_mode \"" + mode_value + "\"";
                 enqueue_remote_([transport, cmd]()
                                 {
                     std::vector<std::string> resp;

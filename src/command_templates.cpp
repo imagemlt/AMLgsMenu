@@ -104,15 +104,17 @@ void CommandTemplates::InitDefaults() {
         "sh -c 'for dev in $(iw dev 2>/dev/null | awk '\\''/Interface/ {iface=$2} /type[[:space:]]+monitor/ {print iface}'\\''); "
         "do iw dev $dev set channel ${CHANNEL}${BW_SUFFIX}; done'";
     defaults_["local"]["monitor_power"] =
-        "sh -c 'for dev in $(iw dev 2>/dev/null | awk '\\''/Interface/ {iface=$2} /type[[:space:]]+monitor/ {print iface}'\\''); "
-        "do iw dev $dev set txpower fixed ${TXPOWER}; done'";
+        "sh -c 'cfg=/storage/digitalfpv/wfb.conf; [ -f \"$cfg\" ] || cfg=/flash/wfb.conf; [ -f \"$cfg\" ] && . \"$cfg\"; "
+        "if [ \"${ap_mode:-0}\" = \"1\" ]; then dev=${wlan:-wlan0}; [ -n \"$dev\" ] && iw dev \"$dev\" set txpower fixed ${TXPOWER}; "
+        "else for dev in $(iw dev 2>/dev/null | awk '\\''/Interface/ {iface=$2} /type[[:space:]]+monitor/ {print iface}'\\''); "
+        "do iw dev \"$dev\" set txpower fixed ${TXPOWER}; done; fi'";
     defaults_["local"]["bad_frame_drop"] =
         "echo 0 > /sys/module/amvdec_h265/parameters/error_handle_policy && "
         "echo 0 > /sys/module/amvdec_h265/parameters/hacked_lowlatency && "
         "echo 2 > /sys/module/amvdec_h265/parameters/nal_skip_policy && "
         "echo 1,1,1,1,1,1,1,1,1 > /sys/module/amvdec_h265/parameters/ref_frame_mark_flag";
     defaults_["local"]["bad_frame_ignore"] =
-        "echo 176 > /sys/module/amvdec_h265/parameters/error_handle_policy && "
+        "echo 432 > /sys/module/amvdec_h265/parameters/error_handle_policy && "
         "echo 1 > /sys/module/amvdec_h265/parameters/hacked_lowlatency && "
         "echo 0 > /sys/module/amvdec_h265/parameters/nal_skip_policy && "
         "echo 0 > /sys/module/amvdec_h265/parameters/ref_frame_mark_flag";

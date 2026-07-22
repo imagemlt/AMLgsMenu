@@ -3,6 +3,7 @@
 #include <chrono>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -39,6 +40,7 @@ private:
     };
 
     bool UpdateSnapshot();
+    bool UpdateSnapshotFromApLink();
     void ProcessEntry(pid_t pid, const std::string &message,
                       std::map<uint64_t, float> &antenna_data,
                       bool &saw_pkt,
@@ -46,6 +48,10 @@ private:
                       uint64_t &first_ts,
                       uint64_t &last_ts);
     static std::vector<std::string> SplitString(const std::string &line, char delim);
+    static std::string TrimCopy(const std::string &text);
+    static bool ReadApModeConfig(bool &ap_mode_enabled, std::string &wlan_name);
+    static std::optional<float> ParseSignalDbm(const std::string &line);
+    static std::optional<float> ParseBitrateMbps(const std::string &line);
 
     mutable std::mutex mutex_;
     GroundSignalSnapshot latest_;

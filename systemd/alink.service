@@ -1,0 +1,16 @@
+[Unit]
+Description=Adaptive link controller
+After=network.target wifibroadcast.service
+
+[Service]
+Type=simple
+WorkingDirectory=/storage/digitalfpv
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/env python3 /storage/digitalfpv/alink_gs --config /storage/digitalfpv/alink_gs.conf
+Restart=on-failure
+RestartSec=2
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
