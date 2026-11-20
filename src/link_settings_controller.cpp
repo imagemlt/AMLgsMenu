@@ -129,28 +129,40 @@ void LinkSettingsController::ApplySkyMode()
     const auto &sky_modes = state_.SkyModes();
     if (sky_modes.empty())
         return;
-    VideoMode mode = sky_modes[state_.SkyModeIndex()];
+    const VideoMode &mode = sky_modes[state_.SkyModeIndex()];
+    const std::unordered_map<std::string, std::string> vars{
+        {"WIDTH", std::to_string(mode.width)},
+        {"HEIGHT", std::to_string(mode.height)},
+        {"FPS", std::to_string(mode.refresh ? mode.refresh : 60)}};
+    const auto sky_cmd = templates_.Render("remote", "sky_mode", vars);
     if (ap_mode_)
     {
-        if (acquire_transport_ && enqueue_remote_)
+        if (enqueue_remote_)
         {
-            if (auto transport = acquire_transport_())
+            auto transport = acquire_transport_ ? acquire_transport_() : nullptr;
+            auto ssh = acquire_ap_ssh_ ? acquire_ap_ssh_() : nullptr;
+            const auto probe = templates_.Render("remote_query", "camera_config", {});
+            const auto cmd = "set_simple_video_mode \"" + BuildApVideoModeName(mode) + "\"";
+            enqueue_remote_([transport, ssh, probe, sky_cmd, cmd]()
             {
-                std::string mode_value = BuildApVideoModeName(mode);
-                std::string cmd = "set_simple_video_mode \"" + mode_value + "\"";
-                enqueue_remote_([transport, cmd]()
-                                {
-                    std::vector<std::string> resp;
-                    if (!transport->SendWithReply(cmd, resp, 5000))
-                    {
-                        std::fprintf(stderr, "[AMLgsMenu] AP %s failed\n", cmd.c_str());
-                    }
-                    else
-                    {
-                        for (const auto &line : resp)
-                            std::fprintf(stdout, "[AMLgsMenu] AP sky mode resp: %s\n", line.c_str());
-                    } });
-            }
+                std::vector<std::string> resp;
+                if (ssh && !probe.empty() && ssh->SendWithReply(probe, resp) &&
+                    std::find(resp.begin(), resp.end(), "camera_conf") != resp.end())
+                {
+                    if (!sky_cmd.empty() && !ssh->Send(sky_cmd, false, 30000))
+                        std::fprintf(stderr, "[AMLgsMenu] Failed to send camera video mode command\n");
+                    return;
+                }
+                if (!transport || !transport->SendWithReply(cmd, resp, 5000))
+                {
+                    std::fprintf(stderr, "[AMLgsMenu] AP %s failed\n", cmd.c_str());
+                }
+                else
+                {
+                    for (const auto &line : resp)
+                        std::fprintf(stdout, "[AMLgsMenu] AP sky mode resp: %s\n", line.c_str());
+                }
+            });
         }
         return;
     }
@@ -158,11 +170,7 @@ void LinkSettingsController::ApplySkyMode()
     {
         if (auto transport = acquire_transport_())
         {
-            std::unordered_map<std::string, std::string> vars{
-                {"WIDTH", std::to_string(mode.width)},
-                {"HEIGHT", std::to_string(mode.height)},
-                {"FPS", std::to_string(mode.refresh ? mode.refresh : 60)}};
-            auto cmd = templates_.Render("remote", "sky_mode", vars);
+            const auto &cmd = sky_cmd;
             if (!cmd.empty())
             {
                 enqueue_remote_([transport, cmd]()
@@ -253,9 +261,10 @@ void LinkSettingsController::ApplyBitrate()
             }
         }
     }
-    if (acquire_transport_ && enqueue_remote_)
+    const auto &acquire_bitrate_transport = ap_mode_ ? acquire_ap_ssh_ : acquire_transport_;
+    if (acquire_bitrate_transport && enqueue_remote_)
     {
-        if (auto transport = acquire_transport_())
+        if (auto transport = acquire_bitrate_transport())
         {
             std::unordered_map<std::string, std::string> vars{{"BITRATE_KBPS", std::to_string(br_kbps)}};
             auto cmd = templates_.Render("remote", "bitrate", vars);
@@ -387,6 +396,35 @@ void LinkSettingsController::ApplySoundVolume()
     int volume = volumes[idx];
     std::string cmd = "pactl set-sink-volume @DEFAULT_SINK@ " + std::to_string(volume) + "% >/dev/null 2>&1";
     std::system(cmd.c_str());
+}
+
+void LinkSettingsController::ApplyAckTime()
+{
+    const auto &levels = state_.AckTimeLevels();
+    if (levels.empty())
+        return;
+    int idx = state_.AckTimeIndex();
+    if (idx < 0 || idx >= static_cast<int>(levels.size()))
+        idx = 0;
+    std::unordered_map<std::string, std::string> vars{{"ACK_TIME", std::to_string(levels[idx])}};
+    const auto cmd = templates_.Render("local", "ack_time", vars);
+    if (!cmd.empty() && enqueue_shell_)
+        enqueue_shell_(cmd);
+
+    const auto remote_cmd = templates_.Render("remote", "ack_time", vars);
+    const auto &acquire_ack_transport = ap_mode_ ? acquire_ap_ssh_ : acquire_transport_;
+    if (!remote_cmd.empty() && acquire_ack_transport && enqueue_remote_)
+    {
+        if (auto transport = acquire_ack_transport())
+        {
+            enqueue_remote_([transport, remote_cmd]()
+                            {
+                if (!transport->Send(remote_cmd, false))
+                {
+                    std::fprintf(stderr, "[AMLgsMenu] Failed to send sky ACK time command\n");
+                } });
+        }
+    }
 }
 
 void LinkSettingsController::ApplyBadFramePolicy()

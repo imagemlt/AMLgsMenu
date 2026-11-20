@@ -76,13 +76,20 @@ void CommandTemplates::InitDefaults() {
     defaults_["remote"]["bandwidth"] =
         "([ -f /etc/wfb.conf ] && sh -c 'tmp=/tmp/wfb_conf.$$.tmp; cp /etc/wfb.conf \"$tmp\" && sed -i \"s/^bandwidth=.*/bandwidth=$1/\" \"$tmp\" && cat \"$tmp\" > /etc/wfb.conf && rm -f \"$tmp\"' sh \"${BANDWIDTH}\" || wifibroadcast cli -s .wireless.width ${BANDWIDTH} )";
     defaults_["remote"]["sky_mode"] =
-        "cli -s .video0.size ${WIDTH}x${HEIGHT} && cli -s .video0.fps ${FPS} && killall -1 majestic";
+        "if [ -f /customer/config/camera.conf ]; then sed -i -e 's/^video_width=.*/video_width=${WIDTH}/' "
+        "-e 's/^video_height=.*/video_height=${HEIGHT}/' -e 's/^video_framerate=.*/video_framerate=${FPS}/' /customer/config/camera.conf "
+        "&& (if [ -x /etc/init.d/S95camera ]; then /etc/init.d/S95camera reload; "
+        "elif [ -x /customer/S95camera ]; then /customer/S95camera reload; else echo 'S95camera reload script not found' >&2; exit 1; fi); "
+        "else cli -s .video0.size ${WIDTH}x${HEIGHT} && cli -s .video0.fps ${FPS} && killall -1 majestic; fi";
     defaults_["remote"]["bitrate"] =
-        "cli -s .video0.bitrate ${BITRATE_KBPS} && curl -s 'http://localhost/api/v1/set?video0.bitrate=${BITRATE_KBPS}'";
+        "(if [ -f /customer/config/camera.conf ]; then sed -i 's/^video_bitrate=.*/video_bitrate=${BITRATE_KBPS}/' /customer/config/camera.conf; "
+        "else cli -s .video0.bitrate ${BITRATE_KBPS}; fi) && curl -s 'http://localhost/api/v1/set?video0.bitrate=${BITRATE_KBPS}'";
     defaults_["remote"]["sky_power"] =
         "([ -f /etc/wfb.conf ] && sh -c 'tmp=/tmp/wfb_conf.$$.tmp; cp /etc/wfb.conf \"$tmp\" && sed -i \"s/^driver_txpower_override=.*/driver_txpower_override=$1/\" \"$tmp\" && cat \"$tmp\" > /etc/wfb.conf && rm -f \"$tmp\"' sh \"${POWER}\" || wifibroadcast cli -s .wireless.txpower ${POWER} ) && iw dev wlan0 set txpower fixed ${TXPOWER}";
     defaults_["remote"]["sky_mcs"] =
         "([ -f /etc/wfb.conf ] && sh -c 'tmp=/tmp/wfb_conf.$$.tmp; cp /etc/wfb.conf \"$tmp\" && sed -i \"s/^mcs_index=.*/mcs_index=$1/\" \"$tmp\" && cat \"$tmp\" > /etc/wfb.conf && rm -f \"$tmp\" && . /etc/wfb.conf && wfb_tx_cmd 8000 set_radio -B $bandwidth -M $mcs_index -S $stbc -L $ldpc -G $guard_interval' sh \"${MCS}\" || wifibroadcast cli -s .broadcast.mcs_index ${MCS} )";
+    defaults_["remote"]["ack_time"] =
+        "sh -c 'found=0; failed=0; for path in /proc/net/*/*/ack_timeout; do [ -f \"$path\" ] || continue; found=1; if echo \"$1\" > \"$path\"; then echo \"[AMLgsMenu] Sky ACK time $1 applied: $path\"; else echo \"[AMLgsMenu] Sky ACK time write failed: $path\" >&2; failed=1; fi; done; if [ \"$found\" = 0 ]; then echo \"[AMLgsMenu] No sky ack_timeout found under /proc/net\" >&2; exit 1; fi; exit \"$failed\"' sh \"${ACK_TIME}\"";
     defaults_["remote"]["request_idr"] =
         "curl -s http://localhost/request/idr >/dev/null";
     defaults_["remote_query"]["channel"] =
@@ -94,20 +101,27 @@ void CommandTemplates::InitDefaults() {
     defaults_["remote_query"]["sky_mcs"] =
         "awk -F= '/^mcs_index=/{print $2; exit}' /etc/wfb.conf";
     defaults_["remote_query"]["bitrate"] =
-        "cli -g .video0.bitrate";
+        "if [ -f /customer/config/camera.conf ]; then sed -n 's/^video_bitrate=//p' /customer/config/camera.conf; else cli -g .video0.bitrate; fi";
     defaults_["remote_query"]["sky_size"] =
-        "cli -g .video0.size";
+        "if [ -f /customer/config/camera.conf ]; then awk -F= '$1==\"video_width\"{w=$2+0} $1==\"video_height\"{h=$2+0} "
+        "END{if(w>0 && h>0) print w \"x\" h}' /customer/config/camera.conf; else cli -g .video0.size; fi";
     defaults_["remote_query"]["sky_fps"] =
-        "cli -g .video0.fps";
+        "if [ -f /customer/config/camera.conf ]; then sed -n 's/^video_framerate=//p' /customer/config/camera.conf; else cli -g .video0.fps; fi";
+    defaults_["remote_query"]["camera_config"] =
+        "if [ -f /customer/config/camera.conf ]; then echo camera_conf; fi";
 
     defaults_["local"]["monitor_channel"] =
         "sh -c 'for dev in $(iw dev 2>/dev/null | awk '\\''/Interface/ {iface=$2} /type[[:space:]]+monitor/ {print iface}'\\''); "
         "do iw dev $dev set channel ${CHANNEL}${BW_SUFFIX}; done'";
     defaults_["local"]["monitor_power"] =
         "sh -c 'cfg=/storage/digitalfpv/wfb.conf; [ -f \"$cfg\" ] || cfg=/flash/wfb.conf; [ -f \"$cfg\" ] && . \"$cfg\"; "
-        "if [ \"${ap_mode:-0}\" = \"1\" ]; then dev=${wlan:-wlan0}; [ -n \"$dev\" ] && iw dev \"$dev\" set txpower fixed ${TXPOWER}; "
+        "if [ \"${ap_mode:-0}\" = \"1\" ]; then dev=; for candidate in $(iw dev 2>/dev/null | awk '\\''/Interface/ {print $2}'\\''); do "
+        "if iw dev \"$candidate\" link 2>/dev/null | grep -q '\\''^Connected to '\\''; then dev=$candidate; break; fi; done; "
+        "[ -n \"$dev\" ] && iw dev \"$dev\" set txpower fixed ${TXPOWER}; "
         "else for dev in $(iw dev 2>/dev/null | awk '\\''/Interface/ {iface=$2} /type[[:space:]]+monitor/ {print iface}'\\''); "
         "do iw dev \"$dev\" set txpower fixed ${TXPOWER}; done; fi'";
+    defaults_["local"]["ack_time"] =
+        "sh -c 'found=0; failed=0; for path in /proc/net/*/*/ack_timeout; do [ -f \"$path\" ] || continue; found=1; if echo ${ACK_TIME} > \"$path\"; then echo \"[AMLgsMenu] ACK time ${ACK_TIME} applied: $path\"; else echo \"[AMLgsMenu] ACK time write failed: $path\" >&2; failed=1; fi; done; if [ \"$found\" = 0 ]; then echo \"[AMLgsMenu] No ack_timeout found under /proc/net\" >&2; exit 1; fi; exit \"$failed\"'";
     defaults_["local"]["bad_frame_drop"] =
         "echo 0 > /sys/module/amvdec_h265/parameters/error_handle_policy && "
         "echo 0 > /sys/module/amvdec_h265/parameters/hacked_lowlatency && "

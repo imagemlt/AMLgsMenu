@@ -13,6 +13,7 @@ struct GroundSignalSnapshot {
     float signal_a = 0.0f;
     float signal_b = 0.0f;
     bool valid = false;
+    bool is_ap_link = false;
     std::chrono::steady_clock::time_point timestamp = std::chrono::steady_clock::time_point::min();
 };
 

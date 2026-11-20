@@ -100,6 +100,7 @@ private:
 
     AppConfig config_;
     bool ap_mode_ = false;
+    std::string ap_iface_;
     std::string ap_gateway_;
     std::atomic<int> update_status_{0};
 };

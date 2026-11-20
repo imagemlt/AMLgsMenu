@@ -7,6 +7,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <utility>
 
 class LinkSettingsController
 {
@@ -20,6 +21,10 @@ public:
     void SetHooks(AcquireTransportFn acquire_transport,
                   EnqueueRemoteFn enqueue_remote,
                   EnqueueShellFn enqueue_shell);
+    void SetApSshTransportHook(AcquireTransportFn acquire_ap_ssh)
+    {
+        acquire_ap_ssh_ = std::move(acquire_ap_ssh);
+    }
 
     void SetApMode(bool enabled) { ap_mode_ = enabled; }
 
@@ -35,6 +40,7 @@ public:
     void ApplyGroundPower();
     void ApplySoundEnabled();
     void ApplySoundVolume();
+    void ApplyAckTime();
     void ApplyBadFramePolicy();
     void ApplyAdaptiveLink();
     void ApplyNetworkMode();
@@ -49,6 +55,7 @@ private:
     MenuState &state_;
     CommandTemplates &templates_;
     AcquireTransportFn acquire_transport_;
+    AcquireTransportFn acquire_ap_ssh_;
     EnqueueRemoteFn enqueue_remote_;
     EnqueueShellFn enqueue_shell_;
     bool idr_requested_ = false;

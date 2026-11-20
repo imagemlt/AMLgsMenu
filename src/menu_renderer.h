@@ -17,6 +17,8 @@ public:
     {
         float ground_signal_a = 0.0f;
         float ground_signal_b = 0.0f;
+        bool has_ap_signal = false;
+        float ap_signal_dbm = 0.0f;
         float rc_signal = 0.0f;
         bool has_rc_signal = false;
         bool has_flight_mode = false;

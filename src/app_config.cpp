@@ -441,6 +441,35 @@ bool AppConfig::LoadInto(MenuState &state, std::string &ssh_password)
         config_kv_["buf_level"] = std::to_string(buffer_levels[idx]);
     }
 
+    const auto &ack_time_levels = state.AckTimeLevels();
+    if (!ack_time_levels.empty())
+    {
+        int ack_time_value = ack_time_levels.front();
+        auto it_ack = config_kv_.find("ack_time");
+        if (it_ack != config_kv_.end())
+        {
+            try
+            {
+                ack_time_value = std::stoi(it_ack->second);
+            }
+            catch (const std::exception &)
+            {
+                ack_time_value = ack_time_levels.front();
+            }
+        }
+        int idx = 0;
+        for (int i = 0; i < static_cast<int>(ack_time_levels.size()); ++i)
+        {
+            if (ack_time_levels[i] == ack_time_value)
+            {
+                idx = i;
+                break;
+            }
+        }
+        state.SetAckTimeIndex(idx);
+        config_kv_["ack_time"] = std::to_string(ack_time_levels[idx]);
+    }
+
     const auto &hdmi_attrs = state.HdmiAttrs();
     if (!hdmi_attrs.empty())
     {

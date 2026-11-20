@@ -1,4 +1,5 @@
 #include "signal_monitor.h"
+#include "wifi_link_utils.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -169,10 +170,26 @@ bool SignalMonitor::UpdateSnapshotFromApLink()
         return false;
     }
 
+    wlan_name = DetectConnectedWifiInterface(wlan_name);
+    if (wlan_name.empty())
+    {
+        GroundSignalSnapshot snapshot{};
+        snapshot.is_ap_link = true;
+        snapshot.timestamp = std::chrono::steady_clock::now();
+        std::lock_guard<std::mutex> lock(mutex_);
+        latest_ = snapshot;
+        return false;
+    }
+
     const std::string cmd = "iw dev " + wlan_name + " link 2>/dev/null";
     FILE *pipe = popen(cmd.c_str(), "r");
     if (!pipe)
     {
+        GroundSignalSnapshot snapshot{};
+        snapshot.is_ap_link = true;
+        snapshot.timestamp = std::chrono::steady_clock::now();
+        std::lock_guard<std::mutex> lock(mutex_);
+        latest_ = snapshot;
         return false;
     }
 
@@ -202,14 +219,16 @@ bool SignalMonitor::UpdateSnapshotFromApLink()
     pclose(pipe);
 
     const auto now = std::chrono::steady_clock::now();
+    GroundSignalSnapshot snapshot{};
+    snapshot.is_ap_link = true;
+    snapshot.timestamp = now;
     if (signal_dbm.has_value())
     {
-        GroundSignalSnapshot snapshot;
         snapshot.signal_a = *signal_dbm;
         snapshot.signal_b = *signal_dbm;
         snapshot.valid = true;
-        snapshot.timestamp = now;
-
+    }
+    {
         std::lock_guard<std::mutex> lock(mutex_);
         latest_ = snapshot;
     }

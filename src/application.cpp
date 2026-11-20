@@ -11,6 +11,7 @@
 #include "ap_tcp_client.h"
 #include "command_templates.h"
 #include "terminal.h"
+#include "wifi_link_utils.h"
 
 #include <algorithm>
 #include <cmath>
@@ -79,7 +80,7 @@ std::string Application::DetectApGateway(const std::string &prefer_iface)
         {
             if (!prefer_iface.empty() && iface == prefer_iface)
                 return std::string(buf);
-            if (fallback.empty())
+            if (prefer_iface.empty() && fallback.empty())
                 fallback = std::string(buf);
         }
     }
@@ -352,6 +353,24 @@ bool Application::Initialize(const std::string &font_path, bool use_mock,
                 std::system(cmd.c_str());
             }
         });
+    settings_controller_->SetApSshTransportHook(
+        [this]() -> std::shared_ptr<CommandTransport>
+        {
+            std::string preferred_wlan;
+            auto it = config_.MutableValues().find("wlan");
+            if (it != config_.MutableValues().end() && !it->second.empty())
+                preferred_wlan = it->second;
+            ap_iface_ = DetectConnectedWifiInterface(preferred_wlan);
+            ap_gateway_ = ap_iface_.empty() ? "" : DetectApGateway(ap_iface_);
+            if (ap_gateway_.empty())
+            {
+                std::fprintf(stderr, "[AMLgsMenu] AP mode: no connected Wi-Fi interface or gateway available for SSH\n");
+                return {};
+            }
+            std::fprintf(stdout, "[AMLgsMenu] AP SSH: interface %s, gateway %s\n",
+                         ap_iface_.c_str(), ap_gateway_.c_str());
+            return std::make_shared<SshCommandClient>(ap_gateway_, ssh_port_, ssh_user_, ssh_password_);
+        });
     settings_controller_->SetApMode(ap_mode_);
     remote_sync_ = std::make_unique<RemoteSyncService>(*menu_state_, command_templates_, config_);
     remote_sync_->SetHooks(
@@ -384,6 +403,11 @@ bool Application::Initialize(const std::string &font_path, bool use_mock,
             if (telemetry_worker_)
             {
                 auto snap = telemetry_worker_->Latest();
+                if (snap.ground_signal.is_ap_link && snap.ground_signal.valid)
+                {
+                    data.has_ap_signal = true;
+                    data.ap_signal_dbm = snap.ground_signal.signal_a;
+                }
                 if (snap.ground_signal.valid)
                 {
                     if (last_data.ground_signal_a == 0.0f)
@@ -588,6 +612,19 @@ bool Application::Initialize(const std::string &font_path, bool use_mock,
             }
             break;
         }
+        case MenuState::SettingType::AckTime: {
+            const auto &levels = menu_state_->AckTimeLevels();
+            if (!levels.empty())
+            {
+                int idx = menu_state_->AckTimeIndex();
+                if (idx < 0 || idx >= static_cast<int>(levels.size()))
+                    idx = 0;
+                SaveConfigValue("ack_time", std::to_string(levels[idx]));
+                if (settings_controller_)
+                    settings_controller_->ApplyAckTime();
+            }
+            break;
+        }
         case MenuState::SettingType::HdmiAttr: {
             const auto &attrs = menu_state_->HdmiAttrs();
             if (!attrs.empty())
@@ -776,20 +813,21 @@ void Application::RebuildTransport(MenuState::FirmwareType type, bool ap_mode)
     std::shared_ptr<CommandTransport> new_transport;
     if (ap_mode)
     {
-        std::string wlan = "wlan0";
+        std::string preferred_wlan;
         auto it = config_.MutableValues().find("wlan");
         if (it != config_.MutableValues().end() && !it->second.empty())
-            wlan = it->second;
-        std::string gw = ap_gateway_.empty() ? DetectApGateway(wlan) : ap_gateway_;
+            preferred_wlan = it->second;
+        ap_iface_ = DetectConnectedWifiInterface(preferred_wlan);
+        ap_gateway_ = ap_iface_.empty() ? "" : DetectApGateway(ap_iface_);
+        const std::string &gw = ap_gateway_;
         if (gw.empty())
         {
-            std::fprintf(stderr, "[AMLgsMenu] AP mode: no gateway detected on '%s', remote commands will fail\n",
-                         wlan.c_str());
+            std::fprintf(stderr, "[AMLgsMenu] AP mode: no connected Wi-Fi interface or gateway detected, remote commands will fail\n");
         }
         else
         {
-            ap_gateway_ = gw;
-            std::fprintf(stdout, "[AMLgsMenu] AP mode: using air_man_ap at %s:12355\n", gw.c_str());
+            std::fprintf(stdout, "[AMLgsMenu] AP mode: using interface %s and gateway %s\n",
+                         ap_iface_.c_str(), gw.c_str());
             new_transport = std::make_shared<ApTcpClient>(gw);
         }
     }

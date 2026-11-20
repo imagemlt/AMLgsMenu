@@ -22,6 +22,7 @@ add_executable(AMLgsMenu
     src/remote_sync_service.cpp
     src/splash_data.cpp
     src/telemetry_worker.cpp
+    src/wifi_link_utils.cpp
     src/menu_state.cpp
     src/video_mode.cpp
     src/udp_command_client.cpp

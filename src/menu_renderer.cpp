@@ -291,6 +291,7 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
 {
     ImDrawList *draw_list = ImGui::GetBackgroundDrawList();
     const bool is_cn = state_.GetLanguage() == MenuState::Language::CN;
+    const bool ap_mode = state_.NetworkModeIndex() == static_cast<int>(MenuState::NetworkMode::ConnectAp);
     const ImVec2 center(viewport->Pos.x + viewport->Size.x * 0.5f,
                         viewport->Pos.y + viewport->Size.y * 0.5f);
 
@@ -325,10 +326,20 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
         }
     };
 
-    if (!use_mock_ && data.has_wifi_monitor)
+    if (!use_mock_ && (ap_mode || data.has_wifi_monitor))
     {
         char wifi_buf[64];
-        std::snprintf(wifi_buf, sizeof(wifi_buf), "%d WIFI PLUGGED", data.wifi_monitor_count);
+        if (ap_mode)
+        {
+            if (data.has_ap_signal)
+                std::snprintf(wifi_buf, sizeof(wifi_buf), "WIFI %d dBm", static_cast<int>(data.ap_signal_dbm));
+            else
+                std::snprintf(wifi_buf, sizeof(wifi_buf), "WIFI DISCONNECTED");
+        }
+        else
+        {
+            std::snprintf(wifi_buf, sizeof(wifi_buf), "%d WIFI PLUGGED", data.wifi_monitor_count);
+        }
         ImVec2 pos(viewport->Pos.x + 20.0f, viewport->Pos.y + 20.0f);
         float small = ImGui::GetFontSize() * 0.85f;
         draw_text_outline(ImGui::GetFont(), small, pos, text_fill, text_outline, wifi_buf);
@@ -447,7 +458,7 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
     };
 
     float signal_block_bottom = viewport->Pos.y + viewport->Size.y * 0.05f;
-    if (data.has_rc_signal || data.ground_signal_a != 0.0f || data.ground_signal_b != 0.0f)
+    if (!ap_mode && (data.has_rc_signal || data.ground_signal_a != 0.0f || data.ground_signal_b != 0.0f))
     {
         std::ostringstream signal;
         if (is_cn)
@@ -694,7 +705,7 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
     const float base_font_size = 26.0f;
     const float font_scale = ImGui::GetFontSize() / base_font_size;
     const float menu_height_scale = std::min(1.15f, std::max(1.0f, font_scale));
-    const float extra_row_height = 0.08f; // increase height for extra rows
+    const float extra_row_height = 0.08f + ImGui::GetFrameHeightWithSpacing() / viewport->Size.y;
     const float menu_height_ratio = 0.70f + (menu_height_scale - 1.0f) * 0.45f + extra_row_height;
     const ImVec2 menu_size = ImVec2(viewport->Size.x * 0.54f, viewport->Size.y * menu_height_ratio);
     // Slightly raise the menu vertically (reduce the base ratio from 0.16 to 0.14)
@@ -1034,6 +1045,7 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
                      });
 
             const auto &buffer_levels = state_.BufferLevels();
+            const auto &ack_time_levels = state_.AckTimeLevels();
             const auto &hdmi_attrs = state_.HdmiAttrs();
             const auto &network_modes = state_.NetworkModes();
             auto render_hdmi_attr = [&]
@@ -1122,6 +1134,35 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
                                      {
                                          state_.SetBufferLevelIndex(i);
                                      }
+                                     if (selected)
+                                         ImGui::SetItemDefaultFocus();
+                                 }
+                                 ImGui::EndCombo();
+                             }
+                         });
+                     },
+                     "", [] {});
+            row_pair(is_cn ? "ACK\u65f6\u95f4" : "ACK Time", [&]
+                     {
+                         if (ack_time_levels.empty())
+                         {
+                             ImGui::TextUnformatted("--");
+                             return;
+                         }
+                         register_focus(0, [&]
+                         {
+                             int idx = state_.AckTimeIndex();
+                             if (idx < 0 || idx >= static_cast<int>(ack_time_levels.size()))
+                                 idx = 0;
+                             const std::string label = std::to_string(ack_time_levels[idx]);
+                             if (ImGui::BeginCombo("##ack_time", label.c_str()))
+                             {
+                                 for (int i = 0; i < static_cast<int>(ack_time_levels.size()); ++i)
+                                 {
+                                     const std::string item_label = std::to_string(ack_time_levels[i]);
+                                     bool selected = (idx == i);
+                                     if (ImGui::Selectable(item_label.c_str(), selected))
+                                         state_.SetAckTimeIndex(i);
                                      if (selected)
                                          ImGui::SetItemDefaultFocus();
                                  }

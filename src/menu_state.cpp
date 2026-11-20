@@ -12,6 +12,7 @@ MenuState::MenuState(std::vector<VideoMode> sky_modes, std::vector<VideoMode> gr
       mcs_levels_(BuildRange(0, 12)),
       volume_levels_({0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100}),
       buffer_levels_(BuildRange(1, 64)),
+      ack_time_levels_({33, 83, 133, 183, 233, 255}),
       hdmi_attrs_({"420", "422", "rgb"}),
       sky_modes_(std::move(sky_modes)),
       ground_modes_(std::move(ground_modes))
@@ -187,6 +188,16 @@ void MenuState::SetBufferLevelIndex(int index)
     }
     buffer_level_index_ = index;
     NotifyChange(SettingType::BufferLevel);
+}
+
+void MenuState::SetAckTimeIndex(int index)
+{
+    if (index < 0 || index >= static_cast<int>(ack_time_levels_.size()) || ack_time_index_ == index)
+    {
+        return;
+    }
+    ack_time_index_ = index;
+    NotifyChange(SettingType::AckTime);
 }
 
 void MenuState::SetHdmiAttrIndex(int index)
