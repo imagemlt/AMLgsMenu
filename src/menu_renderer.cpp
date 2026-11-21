@@ -1403,11 +1403,6 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
             ImGui::OpenPopup("configure_wifi_client");
             wifi_client_popup_pending_ = false;
         }
-        if (wifi_client_error_popup_pending_)
-        {
-            ImGui::OpenPopup("wifi_client_error");
-            wifi_client_error_popup_pending_ = false;
-        }
 
         ImGui::SetNextWindowSize(ImVec2(420.0f, 0), ImGuiCond_FirstUseEver);
         ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + viewport->Size.x * 0.5f,
@@ -1569,7 +1564,9 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
             ImGui::EndPopup();
         }
 
-        ImGui::SetNextWindowSize(ImVec2(520.0f, 0), ImGuiCond_FirstUseEver);
+        // ================= Wi-Fi 连接向导 =================
+        // 步骤 0：选网卡 -> 1：扫描/选 AP -> 2：输密码 -> 3：连接结果
+        ImGui::SetNextWindowSize(ImVec2(560.0f, 0), ImGuiCond_FirstUseEver);
         ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + viewport->Size.x * 0.5f,
                                        viewport->Pos.y + viewport->Size.y * 0.5f),
                                 ImGuiCond_Always, ImVec2(0.5f, 0.5f));
@@ -1577,84 +1574,321 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
                                    ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar))
         {
             const char *title = is_cn ? "\u8fde\u63a5\u70ed\u70b9" : "Connect AP";
-            const char *ssid_label = is_cn ? "\u70ed\u70b9\u540d" : "SSID";
-            const char *password_label = is_cn ? "\u70ed\u70b9\u5bc6\u7801" : "Password";
-            const char *msg = is_cn ? "\u586b\u5199\u8981\u8fde\u63a5\u7684\u70ed\u70b9\u540d\u548c\u5bc6\u7801\uff0c\u786e\u8ba4\u540e\u4f1a\u5207\u6362\u5230\u8fde\u63a5\u70ed\u70b9\u6a21\u5f0f\u3002"
-                                    : "Enter the target hotspot SSID and password. Confirming will switch to Connect AP mode.";
-            ImGui::TextUnformatted(title);
-            ImGui::Spacing();
-            ImGui::TextWrapped("%s", msg);
-            ImGui::Spacing();
-            const float label_width = is_cn ? 96.0f : 96.0f;
-            const float input_width = 320.0f;
-            if (ImGui::BeginTable("wifi_client_fields", 2,
-                                  ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoSavedSettings))
-            {
-                ImGui::TableSetupColumn("label", ImGuiTableColumnFlags_WidthFixed, label_width);
-                ImGui::TableSetupColumn("input", ImGuiTableColumnFlags_WidthFixed, input_width);
-                ImGui::TableNextRow();
-                ImGui::TableSetColumnIndex(0);
-                ImGui::TextUnformatted(ssid_label);
-                ImGui::TableSetColumnIndex(1);
-                ImGui::SetNextItemWidth(input_width);
-                ImGui::InputText("##ssid", wifi_client_ssid_, sizeof(wifi_client_ssid_));
-                ImGui::TableNextRow();
-                ImGui::TableSetColumnIndex(0);
-                ImGui::TextUnformatted(password_label);
-                ImGui::TableSetColumnIndex(1);
-                ImGui::SetNextItemWidth(input_width);
-                ImGui::InputText("##password", wifi_client_password_, sizeof(wifi_client_password_), ImGuiInputTextFlags_Password);
-                ImGui::EndTable();
-            }
-            ImGui::Spacing();
 
-            const float button_width = 130.0f;
-            const float spacing = ImGui::GetStyle().ItemSpacing.x;
-            const float total_width = button_width * 2.0f + spacing;
-            const float region_width = ImGui::GetContentRegionAvail().x;
-            const float base_x = ImGui::GetCursorPosX();
-            if (region_width > total_width)
+            // 每帧刷新当前网卡的实时状态（轻量：读 iw link）
+            wifi_status_timer_ += ImGui::GetIO().DeltaTime;
+            if (wifi_status_timer_ > 1.0f)
             {
-                ImGui::SetCursorPosX(base_x + (region_width - total_width) * 0.5f);
+                wifi_status_timer_ = 0.0f;
+                if (!wifi_.Iface().empty())
+                    wifi_live_status_ = WifiController::QueryStatus(wifi_.Iface());
             }
-            if (ImGui::Button(is_cn ? "\u53d6\u6d88" : "Cancel", ImVec2(button_width, 0)))
+
+            // 后台扫描结果
             {
-                ImGui::CloseCurrentPopup();
+                std::vector<WifiAp> got;
+                bool scanning = false;
+                if (wifi_.PollScan(&got, &scanning))
+                    wifi_aps_ = std::move(got);
+                wifi_scanning_ = scanning;
             }
-            ImGui::SameLine();
-            if (ImGui::Button(is_cn ? "\u786e\u8ba4" : "Confirm", ImVec2(button_width, 0)))
+            // 后台连接结果
             {
-                const std::string ssid = wifi_client_ssid_;
-                const std::string password = wifi_client_password_;
-                if (apply_wifi_client_ && apply_wifi_client_(ssid, password))
+                bool ok = false, running = false;
+                std::string msg;
+                if (wifi_.PollConnect(&ok, &msg, &running))
                 {
-                    state_.ForceNetworkModeNotifyOnce();
-                    state_.SetNetworkModeIndex(static_cast<int>(MenuState::NetworkMode::ConnectAp));
-                    ImGui::CloseCurrentPopup();
+                    wifi_connecting_ = false;
+                    wifi_result_ok_ = ok;
+                    wifi_result_msg_ = msg;
+                    wifi_has_result_ = true;
+                    wifi_step_ = 3;
                 }
                 else
                 {
-                    wifi_client_error_popup_pending_ = true;
+                    wifi_connecting_ = running;
                 }
             }
-            ImGui::EndPopup();
-        }
 
-        ImGui::SetNextWindowSize(ImVec2(360.0f, 0), ImGuiCond_FirstUseEver);
-        ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + viewport->Size.x * 0.5f,
-                                       viewport->Pos.y + viewport->Size.y * 0.5f),
-                                ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-        if (ImGui::BeginPopupModal("wifi_client_error", nullptr,
-                                   ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar))
-        {
-            const char *msg = is_cn ? "\u4fdd\u5b58\u8fde\u63a5\u70ed\u70b9\u914d\u7f6e\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5 SSID \u548c\u5bc6\u7801\u3002"
-                                    : "Failed to save the hotspot configuration. Check the SSID and password.";
-            ImGui::TextWrapped("%s", msg);
+            ImGui::TextUnformatted(title);
             ImGui::Spacing();
-            if (ImGui::Button(is_cn ? "\u786e\u5b9a" : "OK", ImVec2(120.0f, 0)))
+
+            // ---- 步骤指示 ----
             {
-                ImGui::CloseCurrentPopup();
+                const char *steps_cn[] = {"1 \u9009\u7f51\u5361", "2 \u9009\u70ed\u70b9", "3 \u5bc6\u7801", "4 \u8fde\u63a5"};
+                const char *steps_en[] = {"1 Iface", "2 AP", "3 Password", "4 Connect"};
+                const char **steps = is_cn ? steps_cn : steps_en;
+                for (int i = 0; i < 4; ++i)
+                {
+                    if (i)
+                        ImGui::SameLine();
+                    bool cur = (i == wifi_step_);
+                    bool done = (i < wifi_step_);
+                    ImVec4 col = cur ? ImVec4(0.35f, 0.75f, 1.0f, 1.0f)
+                                     : (done ? ImVec4(0.45f, 0.85f, 0.45f, 1.0f)
+                                             : ImVec4(0.55f, 0.55f, 0.55f, 1.0f));
+                    ImGui::TextColored(col, "%s", steps[i]);
+                }
             }
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            // ---- 步骤 0：选网卡 ----
+            if (wifi_step_ == 0)
+            {
+                ImGui::TextWrapped("%s", is_cn
+                    ? "\u9009\u62e9\u7528\u4e8e\u8fde\u63a5\u70ed\u70b9\u7684\u65e0\u7ebf\u7f51\u5361\uff08WFB \u865a\u62df\u5361\u4e0d\u5728\u5217\u8868\u4e2d\uff09\u3002"
+                    : "Select the wireless interface used to connect the AP (WFB virtual interfaces are excluded).");
+
+                if (wifi_ifaces_.empty())
+                {
+                    wifi_ifaces_ = WifiController::ListIfaces();
+                    if (wifi_iface_idx_ >= static_cast<int>(wifi_ifaces_.size()))
+                        wifi_iface_idx_ = 0;
+                }
+
+                ImGui::Spacing();
+                if (wifi_ifaces_.empty())
+                {
+                    ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.35f, 1.0f), "%s",
+                        is_cn ? "\u6ca1\u6709\u627e\u5230\u53ef\u7528\u7684\u65e0\u7ebf\u7f51\u5361" : "No usable wireless interface");
+                    ImGui::Spacing();
+                    if (ImGui::Button(is_cn ? "\u5237\u65b0" : "Refresh", ImVec2(120, 0)))
+                        wifi_ifaces_ = WifiController::ListIfaces();
+                }
+                else
+                {
+                    for (int i = 0; i < static_cast<int>(wifi_ifaces_.size()); ++i)
+                    {
+                        const WifiIface &it = wifi_ifaces_[i];
+                        std::string label = it.name + "  [" + it.driver + "]  " + it.bands;
+                        if (!it.ssid.empty())
+                            label += std::string("  * ") + it.ssid;
+                        if (ImGui::RadioButton(label.c_str(), wifi_iface_idx_ == i))
+                            wifi_iface_idx_ = i;
+                    }
+                }
+                ImGui::Spacing();
+                ImGui::Separator();
+                ImGui::Spacing();
+
+                bool can_next = !wifi_ifaces_.empty();
+                if (!can_next)
+                    ImGui::BeginDisabled();
+                if (ImGui::Button(is_cn ? "\u4e0b\u4e00\u6b65" : "Next", ImVec2(130, 0)))
+                {
+                    wifi_.SetIface(wifi_ifaces_[wifi_iface_idx_].name);
+                    wifi_aps_.clear();
+                    wifi_scan_requested_ = false;
+                    wifi_step_ = 1;
+                }
+                if (!can_next)
+                    ImGui::EndDisabled();
+                ImGui::SameLine();
+                if (ImGui::Button(is_cn ? "\u53d6\u6d88" : "Cancel", ImVec2(130, 0)))
+                {
+                    wifi_step_ = 0;
+                    ImGui::CloseCurrentPopup();
+                }
+            }
+
+            // ---- 步骤 1：扫描并选 AP ----
+            else if (wifi_step_ == 1)
+            {
+                ImGui::Text(is_cn ? "\u7f51\u5361\uff1a%s\uff08%s\uff09" : "Interface: %s (%s)",
+                            wifi_.Iface().c_str(),
+                            wifi_ifaces_.empty() ? "-" : wifi_ifaces_[wifi_iface_idx_].bands.c_str());
+
+                if (!wifi_scan_requested_)
+                {
+                    wifi_.StartScan(wifi_.Iface());
+                    wifi_scan_requested_ = true;
+                }
+
+                ImGui::Spacing();
+                if (wifi_scanning_)
+                {
+                    ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1.0f), "%s",
+                        is_cn ? "\u6b63\u5728\u626b\u63cf..." : "Scanning...");
+                }
+                else if (wifi_aps_.empty())
+                {
+                    ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.35f, 1.0f), "%s",
+                        is_cn ? "\u672a\u626b\u5230\u70ed\u70b9\uff08\u8be5\u7f51\u5361\u9891\u6bb5\u53ef\u80fd\u4e0d\u8986\u76d6\u76ee\u6807 AP\uff09"
+                              : "No AP found (this card's band may not cover the target AP)");
+                }
+                else
+                {
+                    ImGui::Text("%s %d", is_cn ? "\u626b\u5230" : "Found", static_cast<int>(wifi_aps_.size()));
+                }
+
+                ImGui::BeginChild("ap_list", ImVec2(520, 220), true);
+                for (int i = 0; i < static_cast<int>(wifi_aps_.size()); ++i)
+                {
+                    const WifiAp &ap = wifi_aps_[i];
+                    // 信号强度条
+                    float q = (ap.signal_dbm <= 0) ? ((ap.signal_dbm + 100) / 70.0f)
+                                                   : (ap.signal_dbm / 100.0f);
+                    if (q < 0.0f) q = 0.0f;
+                    if (q > 1.0f) q = 1.0f;
+                    ImVec4 sc = q > 0.6f ? ImVec4(0.4f, 0.9f, 0.4f, 1.0f)
+                              : q > 0.3f ? ImVec4(1.0f, 0.85f, 0.3f, 1.0f)
+                                         : ImVec4(1.0f, 0.45f, 0.35f, 1.0f);
+                    // ConnMan 的 Strength 是 0-100，不是 dBm
+                    int pct = ap.signal_dbm;
+                    if (pct < 0) pct = 0;      // 兼容旧格式(-dBm)
+                    if (pct > 100) pct = 100;
+                    const char *st_tag = "";
+                    if (ap.state == "ready" || ap.state == "online")
+                        st_tag = "  [\u5df2\u8fde]";
+                    else if (ap.state == "failure")
+                        st_tag = "  [\u5931\u8d25]";
+                    char line[256];
+                    std::snprintf(line, sizeof(line), "%s%s   %d%%%s",
+                                  ap.ssid.c_str(), ap.secure ? "  [\u9501]" : "",
+                                  pct, st_tag);
+                    ImGui::PushStyleColor(ImGuiCol_Text, sc);
+                    if (ImGui::Selectable(line, wifi_ap_idx_ == i))
+                        wifi_ap_idx_ = i;
+                    ImGui::PopStyleColor();
+                }
+                ImGui::EndChild();
+
+                ImGui::Spacing();
+                ImGui::Separator();
+                ImGui::Spacing();
+
+                if (ImGui::Button(is_cn ? "\u91cd\u65b0\u626b\u63cf" : "Rescan", ImVec2(120, 0)))
+                {
+                    wifi_scan_requested_ = false;
+                    wifi_aps_.clear();
+                }
+                ImGui::SameLine();
+                bool has_ap = !wifi_aps_.empty();
+                if (!has_ap)
+                    ImGui::BeginDisabled();
+                if (ImGui::Button(is_cn ? "\u4e0b\u4e00\u6b65" : "Next", ImVec2(120, 0)))
+                {
+                    std::snprintf(wifi_client_ssid_, sizeof(wifi_client_ssid_), "%s",
+                                  wifi_aps_[wifi_ap_idx_].ssid.c_str());
+                    wifi_step_ = 2;
+                }
+                if (!has_ap)
+                    ImGui::EndDisabled();
+                ImGui::SameLine();
+                if (ImGui::Button(is_cn ? "\u4e0a\u4e00\u6b65" : "Back", ImVec2(120, 0)))
+                {
+                    wifi_step_ = 0;
+                    wifi_ifaces_.clear();
+                }
+                ImGui::SameLine();
+                if (ImGui::Button(is_cn ? "\u53d6\u6d88" : "Cancel", ImVec2(100, 0)))
+                {
+                    wifi_step_ = 0;
+                    ImGui::CloseCurrentPopup();
+                }
+            }
+
+            // ---- 步骤 2：输密码 ----
+            else if (wifi_step_ == 2)
+            {
+                ImGui::Text(is_cn ? "\u76ee\u6807\u70ed\u70b9\uff1a%s" : "Target AP: %s", wifi_client_ssid_);
+                ImGui::Spacing();
+                ImGui::TextUnformatted(is_cn ? "\u5bc6\u7801" : "Password");
+                ImGui::SetNextItemWidth(420);
+                if (wifi_pwd_focus_ == 1)
+                {
+                    ImGui::SetKeyboardFocusHere();
+                    wifi_pwd_focus_ = 0;
+                }
+                bool enter = ImGui::InputText("##password", wifi_client_password_,
+                                              sizeof(wifi_client_password_),
+                                              ImGuiInputTextFlags_Password |
+                                              ImGuiInputTextFlags_EnterReturnsTrue);
+                ImGui::TextDisabled("%s", is_cn
+                    ? "\uff08\u5f00\u653e\u70ed\u70b9\u7559\u7a7a\u5373\u53ef\uff09"
+                    : "(leave empty for open network)");
+
+                ImGui::Spacing();
+                ImGui::Separator();
+                ImGui::Spacing();
+
+                if (ImGui::Button(is_cn ? "\u8fde\u63a5" : "Connect", ImVec2(130, 0)) || enter)
+                {
+                    wifi_has_result_ = false;
+                    wifi_result_msg_.clear();
+                    wifi_step_ = 3;
+                    wifi_.StartConnect(wifi_client_ssid_, wifi_client_password_, wifi_.Iface());
+                }
+                ImGui::SameLine();
+                if (ImGui::Button(is_cn ? "\u4e0a\u4e00\u6b65" : "Back", ImVec2(130, 0)))
+                    wifi_step_ = 1;
+                ImGui::SameLine();
+                if (ImGui::Button(is_cn ? "\u53d6\u6d88" : "Cancel", ImVec2(100, 0)))
+                {
+                    wifi_step_ = 0;
+                    ImGui::CloseCurrentPopup();
+                }
+            }
+
+            // ---- 步骤 3：连接中 / 结果 ----
+            else
+            {
+                if (wifi_connecting_ || (!wifi_has_result_ && wifi_result_msg_.empty()))
+                {
+                    ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1.0f), "%s",
+                        is_cn ? "\u6b63\u5728\u8fde\u63a5..." : "Connecting...");
+                    ImGui::Spacing();
+                    ImGui::TextDisabled("%s", is_cn
+                        ? "\u6b63\u5728\u901a\u77e5 ConnMan \u8fde\u63a5\u70ed\u70b9\u5e76\u7b49\u5f85 DHCP\uff0c\u6700\u591a 30 \u79d2"
+                        : "Asking ConnMan to connect and waiting for DHCP (up to 30s)");
+                }
+                else if (wifi_result_ok_)
+                {
+                    ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.4f, 1.0f), "%s",
+                        is_cn ? "\u8fde\u63a5\u6210\u529f" : "Connected");
+                    ImGui::Spacing();
+                    ImGui::TextWrapped("%s", wifi_result_msg_.c_str());
+                    ImGui::Spacing();
+                    ImGui::Text("%s %d dBm", is_cn ? "\u4fe1\u53f7\uff1a" : "Signal:", wifi_live_status_.signal_dbm);
+                }
+                else
+                {
+                    ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.35f, 1.0f), "%s",
+                        is_cn ? "\u8fde\u63a5\u5931\u8d25" : "Connection failed");
+                    ImGui::Spacing();
+                    ImGui::TextWrapped("%s", wifi_result_msg_.c_str());
+                }
+
+                ImGui::Spacing();
+                ImGui::Separator();
+                ImGui::Spacing();
+
+                bool done = wifi_has_result_ && !wifi_connecting_;
+                if (!done)
+                    ImGui::BeginDisabled();
+                if (ImGui::Button(is_cn ? "\u5b8c\u6210" : "Done", ImVec2(130, 0)))
+                {
+                    wifi_step_ = 0;
+                    wifi_ifaces_.clear();
+                    if (wifi_result_ok_)
+                    {
+                        state_.ForceNetworkModeNotifyOnce();
+                        state_.SetNetworkModeIndex(static_cast<int>(MenuState::NetworkMode::ConnectAp));
+                    }
+                    ImGui::CloseCurrentPopup();
+                }
+                if (!done)
+                    ImGui::EndDisabled();
+                ImGui::SameLine();
+                if (ImGui::Button(is_cn ? "\u91cd\u8bd5" : "Retry", ImVec2(130, 0)))
+                {
+                    wifi_step_ = 2;
+                    wifi_has_result_ = false;
+                    wifi_pwd_focus_ = 1;
+                }
+            }
+
             ImGui::EndPopup();
         }
 
