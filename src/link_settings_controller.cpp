@@ -1,4 +1,5 @@
 #include "link_settings_controller.h"
+#include "wifi_controller.h"
 
 #include "udp_command_client.h"
 
@@ -432,21 +433,46 @@ void LinkSettingsController::ApplyAdaptiveLink()
     }
 }
 
+// Wi-Fi 连接方式与 kodi 一致：kodi 自己不碰 wpa_supplicant，
+// 而是把「要连哪个 AP」交给 ConnMan，由 ConnMan 驱动 wpa_supplicant
+// 完成关联与 DHCP。这里通过 WifiController::ConnectSync 走同一路径：
+//   写 service_ 配置 -> restart connman -> 显式 connmanctl connect。
+// 注意必须显式 connect：只 restart connman 时 autoconnect 常不触发，
+// 实测热重启后等 65s 仍停在 idle，链路不会自己起来。
 void LinkSettingsController::ApplyNetworkMode()
 {
     const bool connect_ap = state_.NetworkModeIndex() == static_cast<int>(MenuState::NetworkMode::ConnectAp);
-    // 无论是切换到热点还是切回 WFB，都需要重新加载 connman
-    const std::string cmd = "systemctl restart connman && systemctl restart wifibroadcast";
-    if (enqueue_shell_)
-    {
-        enqueue_shell_(cmd);
-    }
-    else
-    {
-        std::system(cmd.c_str());
-    }
-}
 
+    if (!connect_ap)
+    {
+        // 切回 WFB：无线交给 wifibroadcast，ConnMan 不需要连 AP
+        const std::string cmd = "systemctl restart connman && systemctl restart wifibroadcast";
+        if (enqueue_shell_)
+            enqueue_shell_(cmd);
+        else
+            std::system(cmd.c_str());
+        return;
+    }
+
+    // 连接热点：SSID 取自当前配置，异步执行避免阻塞 UI 线程
+    auto do_connect = []() {
+        const std::string ssid = WifiController::ConfiguredSsid();
+        if (ssid.empty())
+        {
+            std::fprintf(stderr, "[AMLgsMenu] Connect AP: no SSID configured\n");
+            return;
+        }
+        std::string msg;
+        const bool ok = WifiController::ConnectSync(ssid, "", "", &msg);
+        std::fprintf(stdout, "[AMLgsMenu] Connect AP: %s (%s)\n",
+                     ok ? "ok" : "failed", msg.c_str());
+    };
+
+    if (enqueue_remote_)
+        enqueue_remote_(do_connect);
+    else
+        do_connect();
+}
 void LinkSettingsController::ApplyLocalMonitorChannel(int channel)
 {
     if (channel <= 0)

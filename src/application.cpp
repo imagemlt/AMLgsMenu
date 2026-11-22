@@ -649,6 +649,9 @@ bool Application::Initialize(const std::string &font_path, bool use_mock,
         } });
     // menu_state_->SetVisibilityChangeCallback([this](bool visible)
     //                                          { if(!visible)this->SaveConfig(); });
+    // 开机自动连一次热点（WFB 模式、或已连接时内部自动跳过）
+    WifiController::AutoConnectOnBoot(20);
+
     running_ = true;
     initialized_ = true;
     last_frame_time_ = std::chrono::steady_clock::now();

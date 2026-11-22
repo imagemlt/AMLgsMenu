@@ -1,6 +1,7 @@
 #pragma once
 
 #include "menu_state.h"
+#include "wifi_controller.h"
 
 #include "imgui.h"
 
@@ -96,6 +97,24 @@ private:
     std::function<bool(const std::string &, const std::string &)> apply_wifi_client_;
     char wifi_client_ssid_[128]{};
     char wifi_client_password_[128]{};
+
+    // ---- Wi-Fi 连接流程（选网卡 -> 扫描 -> 选 AP -> 输密码 -> 连接）----
+    // 步骤：0=选网卡 1=扫描列表 2=输密码 3=连接中/结果
+    WifiController wifi_;
+    int wifi_step_ = 0;
+    std::vector<WifiIface> wifi_ifaces_;
+    int wifi_iface_idx_ = 0;
+    std::vector<WifiAp> wifi_aps_;
+    int wifi_ap_idx_ = 0;
+    bool wifi_scanning_ = false;
+    bool wifi_connecting_ = false;
+    bool wifi_scan_requested_ = false;
+    std::string wifi_result_msg_;
+    bool wifi_result_ok_ = false;
+    bool wifi_has_result_ = false;
+    float wifi_status_timer_ = 0.0f;
+    WifiStatus wifi_live_status_{};
+    int wifi_pwd_focus_ = 0;
     int pending_focus_index_ = -1;
     int last_focus_index_ = -1;
     std::array<std::vector<int>, 2> last_focus_columns_{};

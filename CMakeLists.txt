@@ -19,6 +19,7 @@ add_executable(AMLgsMenu
     src/mavlink_receiver.cpp
     src/menu_renderer.cpp
     src/signal_monitor.cpp
+    src/wifi_controller.cpp
     src/remote_sync_service.cpp
     src/splash_data.cpp
     src/telemetry_worker.cpp
