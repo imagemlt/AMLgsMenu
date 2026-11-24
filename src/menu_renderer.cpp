@@ -1,5 +1,6 @@
 #include "menu_renderer.h"
 
+#include "dock_icons.h"
 #include "imgui.h"
 #include "video_mode.h"
 
@@ -17,6 +18,39 @@
 #include <thread>
 #include <iostream>
 #include <filesystem>
+
+static ImTextureID UploadIcon(const png_byte *pixels, png_uint_32 width, png_uint_32 height)
+{
+    GLuint tex = 0;
+    glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, static_cast<GLsizei>(width), static_cast<GLsizei>(height),
+                 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+    return static_cast<ImTextureID>(tex);
+}
+
+template <std::size_t Size>
+static ImTextureID LoadDockIcon(const unsigned char (&bytes)[Size], const char *name)
+{
+    png_image image{};
+    image.version = PNG_IMAGE_VERSION;
+    ImTextureID texture{};
+    if (png_image_begin_read_from_memory(&image, bytes, Size))
+    {
+        image.format = PNG_FORMAT_RGBA;
+        std::vector<png_byte> pixels(PNG_IMAGE_SIZE(image));
+        if (png_image_finish_read(&image, nullptr, pixels.data(), 0, nullptr))
+            texture = UploadIcon(pixels.data(), image.width, image.height);
+    }
+    if (!texture)
+        std::fprintf(stderr, "[AMLgsMenu] Could not load Dock icon %s: %s\n", name, image.message);
+    png_image_free(&image);
+    return texture;
+}
 
 static MenuRenderer::TelemetryData BuildMockTelemetry(const MenuState &state)
 {
@@ -132,6 +166,15 @@ MenuRenderer::MenuRenderer(MenuState &state, bool &use_mock, std::function<Telem
     LoadIcon(std::string(icon_base + std::string("monitor.png")).c_str(), icon_monitor_, w, h);
     LoadIcon(std::string(icon_base + std::string("temp_air.png")).c_str(), icon_temp_air_, w, h);
     LoadIcon(std::string(icon_base + std::string("temp_ground.png")).c_str(), icon_temp_ground_, w, h);
+    dock_icons_ = {
+        LoadDockIcon(dock_icons::link, "link"),
+        LoadDockIcon(dock_icons::display, "display"),
+        LoadDockIcon(dock_icons::network, "network"),
+        LoadDockIcon(dock_icons::audio, "audio"),
+        LoadDockIcon(dock_icons::record, "record"),
+        LoadDockIcon(dock_icons::terminal, "terminal"),
+        LoadDockIcon(dock_icons::system, "system"),
+    };
 }
 
 bool MenuRenderer::LoadIcon(const char *path, ImTextureID &out_id, int &out_w, int &out_h)
@@ -189,23 +232,14 @@ bool MenuRenderer::LoadIcon(const char *path, ImTextureID &out_id, int &out_w, i
     png_destroy_read_struct(&png_ptr, &info_ptr, nullptr);
     std::fclose(fp);
 
-    GLuint tex = 0;
-    glGenTextures(1, &tex);
-    glBindTexture(GL_TEXTURE_2D, tex);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, static_cast<GLsizei>(width), static_cast<GLsizei>(height),
-                 0, GL_RGBA, GL_UNSIGNED_BYTE, data.data());
-    out_id = static_cast<ImTextureID>(tex);
+    out_id = UploadIcon(data.data(), width, height);
     out_w = static_cast<int>(width);
     out_h = static_cast<int>(height);
     return true;
 }
 MenuRenderer::~MenuRenderer()
 {
-    GLuint tex_ids[5]{};
+    GLuint tex_ids[8 + std::tuple_size_v<decltype(dock_icons_)>]{};
     int count = 0;
     auto collect = [&](ImTextureID id)
     {
@@ -218,7 +252,12 @@ MenuRenderer::~MenuRenderer()
     collect(icon_batt_cell_);
     collect(icon_batt_pack_);
     collect(icon_gps_);
+    collect(icon_speed_);
     collect(icon_monitor_);
+    collect(icon_temp_air_);
+    collect(icon_temp_ground_);
+    for (ImTextureID icon : dock_icons_)
+        collect(icon);
     if (count > 0)
     {
         glDeleteTextures(count, tex_ids);
@@ -450,14 +489,6 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
         draw_text_outline(ImGui::GetFont(), ImGui::GetFontSize(), text_pos, color, text_outline, text.c_str());
     };
 
-    auto draw_centered_text_no_icon = [&](ImVec2 pos, const std::string &text, ImU32 color)
-    {
-        ImVec2 size = ImGui::CalcTextSize(text.c_str());
-        ImVec2 text_pos(pos.x - size.x * 0.5f, pos.y);
-        draw_text_outline(ImGui::GetFont(), ImGui::GetFontSize(), text_pos, color, text_outline, text.c_str());
-    };
-
-    float signal_block_bottom = viewport->Pos.y + viewport->Size.y * 0.05f;
     if (!ap_mode && (data.has_rc_signal || data.ground_signal_a != 0.0f || data.ground_signal_b != 0.0f))
     {
         std::ostringstream signal;
@@ -481,7 +512,6 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
         }
         draw_centered_text(ImVec2(center.x, viewport->Pos.y + viewport->Size.y * 0.05f),
                            signal.str(), text_fill, icon_antenna_);
-        signal_block_bottom = viewport->Pos.y + viewport->Size.y * 0.05f + ImGui::GetFontSize() * 1.2f;
     }
 
     if (data.has_flight_mode)
@@ -494,7 +524,6 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
         std::string label = data.flight_mode;
         ImVec2 size = ImGui::CalcTextSize(label.c_str());
         ImVec2 pos(center.x - size.x * 0.5f, center.y - viewport->Size.y * 0.25f);
-        ImDrawList *dl = draw_list;
         draw_text_outline(font, mode_size, pos, mode_fill, mode_outline, label.c_str());
     }
 
@@ -702,22 +731,21 @@ void MenuRenderer::DrawOsd(const ImGuiViewport *viewport, const TelemetryData &d
 
 void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
 {
-    const float base_font_size = 26.0f;
-    const float font_scale = ImGui::GetFontSize() / base_font_size;
-    const float menu_height_scale = std::min(1.15f, std::max(1.0f, font_scale));
-    const float extra_row_height = 0.08f + ImGui::GetFrameHeightWithSpacing() / viewport->Size.y;
-    const float menu_height_ratio = 0.70f + (menu_height_scale - 1.0f) * 0.45f + extra_row_height;
-    const ImVec2 menu_size = ImVec2(viewport->Size.x * 0.54f, viewport->Size.y * menu_height_ratio);
-    // Slightly raise the menu vertically (reduce the base ratio from 0.16 to 0.14)
-    const float menu_pos_y_ratio = std::max(0.10f, 0.14f - (menu_height_ratio - 0.70f) * 0.5f);
-    const ImVec2 menu_pos = ImVec2(viewport->Pos.x + viewport->Size.x * 0.23f,
-                                   viewport->Pos.y + viewport->Size.y * menu_pos_y_ratio);
+    const float animation_dt = std::min(0.05f, ImGui::GetIO().DeltaTime);
     const bool is_cn = state_.GetLanguage() == MenuState::Language::CN;
+    const bool opened_this_frame = !menu_visible_last_;
     bool kodi_popup_requested = false;
+    int rendered_category_this_frame = -1;
 
-    if (!menu_visible_last_)
+    if (opened_this_frame)
     {
         last_focus_index_ = -1;
+        if (active_category_ < 0)
+        {
+            active_category_ = 0;
+        }
+        pending_focus_index_ = 0;
+        last_rendered_category_ = -1;
     }
     menu_visible_last_ = true;
     if (update_status_)
@@ -737,687 +765,999 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
         }
     }
 
-    ImGui::SetNextWindowBgAlpha(0.6f); // keep menu semi-transparent
-    ImGui::SetNextWindowPos(menu_pos, ImGuiCond_Always);
-    ImGui::SetNextWindowSize(menu_size, ImGuiCond_Always);
-
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 12.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 16.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 8.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.3f);
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.3f);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(18.0f, 16.0f));
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(18, 26, 36, 230));
-    ImGui::PushStyleColor(ImGuiCol_Border, IM_COL32(90, 220, 210, 255)); // brighter teal border
-    ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(235, 245, 255, 255));
-    ImGui::PushStyleColor(ImGuiCol_FrameBg, IM_COL32(36, 52, 72, 230));  // glassy blue
-    ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, IM_COL32(58, 92, 122, 255));
-    ImGui::PushStyleColor(ImGuiCol_FrameBgActive, IM_COL32(76, 120, 150, 255));
-    ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(56, 110, 150, 235)); // vivid buttons
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(78, 140, 185, 255));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, IM_COL32(48, 96, 135, 255));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16.0f, 14.0f));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(18, 20, 25, 215));
+    ImGui::PushStyleColor(ImGuiCol_Border, IM_COL32(255, 255, 255, 38));
+    ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(245, 245, 248, 255));
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, IM_COL32(32, 36, 44, 200));
+    ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, IM_COL32(50, 56, 68, 240));
+    ImGui::PushStyleColor(ImGuiCol_FrameBgActive, IM_COL32(235, 155, 35, 230));
+    ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(40, 45, 56, 220));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(58, 65, 80, 255));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, IM_COL32(235, 155, 35, 230));
+    ImGui::PushStyleColor(ImGuiCol_CheckMark, IM_COL32(245, 166, 35, 255));
+    ImGui::PushStyleColor(ImGuiCol_PopupBg, IM_COL32(22, 25, 32, 245));
+    ImGui::PushStyleColor(ImGuiCol_Header, IM_COL32(235, 155, 35, 75));
+    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, IM_COL32(235, 155, 35, 130));
+    ImGui::PushStyleColor(ImGuiCol_HeaderActive, IM_COL32(235, 155, 35, 200));
+
+    const bool popup_open = ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId);
+
+    // ==========================================
+    // Dock (Bottom Bar - macOS style, icon-only with magnification)
+    // ==========================================
+    const int dock_category[] = {0, 1, 2, 3, -1, -1, 4};
+    const float dock_item_width = 54.0f;
+    const float dock_item_height = 54.0f;
+    const float dock_spacing = 8.0f;
+    const float dock_pad_x = 16.0f;
+    const float dock_pad_y = 10.0f;
+    const float dock_width = dock_item_width * 7.0f + dock_spacing * 6.0f + dock_pad_x * 2.0f;
+    const float dock_height = dock_item_height + dock_pad_y * 2.0f;
+    const ImVec2 dock_pos(viewport->Pos.x + viewport->Size.x * 0.5f,
+                          viewport->Pos.y + viewport->Size.y - 18.0f);
+
+    ImGui::SetNextWindowPos(dock_pos, ImGuiCond_Always, ImVec2(0.5f, 1.0f));
+    ImGui::SetNextWindowSize(ImVec2(dock_width, dock_height), ImGuiCond_Always);
+    ImGui::SetNextWindowBgAlpha(0.96f);
+
+    // Dock shadow on background draw list
+    ImDrawList *bg_draw_dock = ImGui::GetBackgroundDrawList();
+    const ImVec2 dock_rect_min(dock_pos.x - dock_width * 0.5f, dock_pos.y - dock_height);
+    const ImVec2 dock_rect_max(dock_pos.x + dock_width * 0.5f, dock_pos.y);
+    for (int layer = 4; layer >= 1; --layer)
+    {
+        const float sp = static_cast<float>(layer) * 3.0f;
+        bg_draw_dock->AddRect(ImVec2(dock_rect_min.x - sp, dock_rect_min.y - sp),
+                              ImVec2(dock_rect_max.x + sp, dock_rect_max.y + sp),
+                              IM_COL32(0, 0, 0, 50 / layer),
+                              22.0f + sp, 0, sp);
+    }
+
+    if (opened_this_frame || (settings_visible_last_ && active_category_ < 0))
+    {
+        ImGui::SetNextWindowFocus();
+    }
+
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 22.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(dock_pad_x, dock_pad_y));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(dock_spacing, 0.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(20, 24, 34, 250));
+
+    if (ImGui::Begin("AMLgsMenu Dock", nullptr,
+                     ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                         ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
+                         ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing))
+    {
+        if (opened_this_frame || (settings_visible_last_ && active_category_ < 0))
+        {
+            ImGui::SetKeyboardFocusHere();
+        }
+
+        const bool terminal_open = terminal_visible_ && terminal_visible_();
+        if (active_category_ < 0 && !popup_open && !terminal_open && ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+        {
+            state_.ToggleMenuVisibility();
+        }
+
+        ImDrawList *dock_draw = ImGui::GetWindowDrawList();
+
+        for (int i = 0; i < 7; ++i)
+        {
+            if (i > 0)
+            {
+                ImGui::SameLine(0.0f, dock_spacing);
+            }
+            ImGui::PushID(i);
+
+            const bool is_cat_active = (dock_category[i] >= 0 && active_category_ == dock_category[i]);
+            const ImVec2 item_size(dock_item_width, dock_item_height);
+            const bool pressed = ImGui::InvisibleButton("dock_btn", item_size, ImGuiButtonFlags_EnableNav);
+            const bool focused = ImGui::IsItemFocused();
+            const bool hovered = ImGui::IsItemHovered();
+
+            // macOS magnification target calculation
+            float target_hover = 0.0f;
+            if (hovered || focused)
+            {
+                target_hover = 1.0f;
+            }
+            else if (is_cat_active)
+            {
+                target_hover = 0.35f;
+            }
+
+            const float hover_step = animation_dt * 14.0f;
+            dock_hover_amount_[i] += (target_hover - dock_hover_amount_[i]) * std::min(1.0f, hover_step);
+
+            const ImVec2 item_min = ImGui::GetItemRectMin();
+            const ImVec2 item_max = ImGui::GetItemRectMax();
+
+            // Background pill on active/hover
+            if (is_cat_active)
+            {
+                dock_draw->AddRectFilled(item_min, item_max, IM_COL32(245, 166, 35, 55), 14.0f);
+                dock_draw->AddRect(item_min, item_max, IM_COL32(245, 166, 35, 200), 14.0f, 0, 1.5f);
+            }
+            else if (hovered || focused)
+            {
+                dock_draw->AddRectFilled(item_min, item_max, IM_COL32(255, 255, 255, 32), 14.0f);
+            }
+
+            // Keyboard navigation focus border
+            if (focused)
+            {
+                dock_draw->AddRect(item_min, item_max, IM_COL32(245, 166, 35, 240), 14.0f, 0, 2.0f);
+            }
+
+            // Draw Icon with macOS smooth magnification scale (up to 1.35x, expanding upwards)
+            const float base_icon_size = 36.0f;
+            const float scale = 1.0f + dock_hover_amount_[i] * 0.35f;
+            const float icon_size = base_icon_size * scale;
+            const float center_x = item_min.x + dock_item_width * 0.5f;
+            const float center_y = item_min.y + dock_item_height * 0.5f - (dock_hover_amount_[i] * 5.0f);
+            const ImVec2 icon_min(center_x - icon_size * 0.5f, center_y - icon_size * 0.5f);
+            const ImVec2 icon_max(center_x + icon_size * 0.5f, center_y + icon_size * 0.5f);
+
+            if (dock_icons_[i])
+            {
+                dock_draw->AddImage(dock_icons_[i], icon_min, icon_max);
+            }
+
+            // Recording badge: pulsing glowing red dot on record button
+            if (i == 4 && state_.Recording())
+            {
+                const ImVec2 red_dot(icon_max.x - 2.0f, icon_min.y + 4.0f);
+                dock_draw->AddCircleFilled(red_dot, 4.5f, IM_COL32(255, 59, 48, 255));
+                dock_draw->AddCircle(red_dot, 6.5f, IM_COL32(255, 59, 48, 140), 16, 1.5f);
+            }
+
+            // Active category macOS-style dot indicator at bottom
+            if (is_cat_active)
+            {
+                const ImVec2 dot_pos(center_x, item_max.y - 4.0f);
+                dock_draw->AddCircleFilled(dot_pos, 2.5f, IM_COL32(245, 166, 35, 255));
+                dock_draw->AddCircle(dot_pos, 4.0f, IM_COL32(245, 166, 35, 140), 12, 1.0f);
+            }
+
+            if (pressed)
+            {
+                if (i == 4)
+                {
+                    state_.ToggleRecording();
+                }
+                else if (i == 5)
+                {
+                    if (toggle_terminal_)
+                        toggle_terminal_();
+                }
+                else
+                {
+                    active_category_ = dock_category[i];
+                    last_focus_index_ = -1;
+                    pending_focus_index_ = 0;
+                }
+            }
+            ImGui::PopID();
+        }
+
+        // Draw fully closed crisp outer border for Dock
+        const ImVec2 d_min = ImGui::GetWindowPos();
+        const ImVec2 d_max(d_min.x + dock_width, d_min.y + dock_height);
+        dock_draw->AddRect(d_min, d_max, IM_COL32(255, 255, 255, 75), 22.0f, 0, 1.5f);
+    }
+    ImGui::End();
+    ImGui::PopStyleColor(1);
+    ImGui::PopStyleVar(4);
 
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse |
                              ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoTitleBar |
                              ImGuiWindowFlags_NoSavedSettings;
 
-    if (ImGui::Begin("GS Control Menu", nullptr, flags))
+    if (active_category_ >= 0)
     {
-        const bool popup_open = ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId);
-        const bool nav_down = ImGui::IsKeyPressed(ImGuiKey_DownArrow, false);
-        const bool nav_up = ImGui::IsKeyPressed(ImGuiKey_UpArrow, false);
-        if (!popup_open && (nav_down || nav_up) && last_focus_index_ < 0 && pending_focus_index_ < 0)
+        settings_open_amount_ += (1.0f - settings_open_amount_) * std::min(1.0f, animation_dt * 12.0f);
+        const ImVec2 base_menu_size(std::min(840.0f, viewport->Size.x * 0.84f),
+                                    std::min(520.0f, viewport->Size.y * 0.68f));
+        const float open_scale = 0.96f + settings_open_amount_ * 0.04f;
+        const ImVec2 menu_size(base_menu_size.x * open_scale, base_menu_size.y * open_scale);
+        const ImVec2 menu_pos(viewport->Pos.x + viewport->Size.x * 0.5f,
+                              viewport->Pos.y + viewport->Size.y * (0.42f + (1.0f - settings_open_amount_) * 0.015f));
+
+        ImGui::SetNextWindowBgAlpha(0.96f);
+        ImGui::SetNextWindowPos(menu_pos, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+        ImGui::SetNextWindowSize(menu_size, ImGuiCond_Always);
+
+        // Soft ambient back-glow
+        ImDrawList *bg_draw = ImGui::GetBackgroundDrawList();
+        const ImVec2 shadow_min(menu_pos.x - menu_size.x * 0.5f, menu_pos.y - menu_size.y * 0.5f);
+        const ImVec2 shadow_max(menu_pos.x + menu_size.x * 0.5f, menu_pos.y + menu_size.y * 0.5f);
+        for (int layer = 5; layer >= 1; --layer)
         {
-            pending_focus_index_ = 0;
-            // Prevent ImGui default nav from skipping the first item on initial focus.
-            ImGuiIO &io = ImGui::GetIO();
-            const ImGuiKey key = nav_down ? ImGuiKey_DownArrow : ImGuiKey_UpArrow;
-            ImGuiKeyData &key_data = io.KeysData[key - ImGuiKey_NamedKey_BEGIN];
-            key_data.Down = false;
-            key_data.DownDuration = -1.0f;
-            key_data.DownDurationPrev = -1.0f;
+            const float spread = static_cast<float>(layer) * 3.0f;
+            bg_draw->AddRect(ImVec2(shadow_min.x - spread, shadow_min.y - spread),
+                             ImVec2(shadow_max.x + spread, shadow_max.y + spread),
+                             IM_COL32(0, 0, 0, 10 + layer * 6),
+                             16.0f + spread, 0, spread);
         }
 
-        int focus_index = 0;
-        int focused_index = -1;
-        std::array<std::vector<int>, 2> focus_columns;
-        std::vector<int> index_to_col;
-        std::vector<int> index_to_pos;
-        auto register_focus = [&](int col, const std::function<void()> &draw)
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 16.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(20, 24, 34, 252));
+
+        if (ImGui::Begin("AMLgsMenu Settings", nullptr, flags))
         {
-            const bool want_focus = (pending_focus_index_ == focus_index);
-            if (want_focus)
-            {
-                ImGui::SetKeyboardFocusHere();
-            }
-            draw();
-            if (want_focus)
-            {
-                pending_focus_index_ = -1;
-            }
-            if (ImGui::IsItemFocused())
-            {
-                focused_index = focus_index;
-            }
-            index_to_col.push_back(col);
-            index_to_pos.push_back(static_cast<int>(focus_columns[col].size()));
-            focus_columns[col].push_back(focus_index);
-            ++focus_index;
-        };
+            const int rendered_category = active_category_;
+            rendered_category_this_frame = rendered_category;
 
-        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(210, 225, 240, 230));
-        ImGui::TextUnformatted(is_cn ? "\u65e0\u7ebf\u94fe\u8def\u914d\u7f6e" : "Wireless Link Settings");
-        ImGui::PopStyleColor();
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-
-        ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(12, 10)); // slightly taller rows
-        if (ImGui::BeginTable("menu_table", 4, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoSavedSettings))
-        {
-            ImGui::TableSetupColumn("L1", ImGuiTableColumnFlags_WidthStretch, 0.24f);
-            ImGui::TableSetupColumn("C1", ImGuiTableColumnFlags_WidthStretch, 0.24f);
-            ImGui::TableSetupColumn("L2", ImGuiTableColumnFlags_WidthStretch, 0.24f);
-            ImGui::TableSetupColumn("C2", ImGuiTableColumnFlags_WidthStretch, 0.24f);
-
-            auto row_pair = [&](const char *l1, const std::function<void()> &c1,
-                                const char *l2, const std::function<void()> &c2)
+            const bool terminal_open = terminal_visible_ && terminal_visible_();
+            if (!popup_open && !terminal_open && ImGui::IsKeyPressed(ImGuiKey_Escape, false))
             {
-                ImGui::TableNextRow();
-                ImGui::TableSetColumnIndex(0);
-                ImGui::TextUnformatted(l1);
-                ImGui::TableSetColumnIndex(1);
-                ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x * 0.8f);
-                c1();
-                ImGui::PopItemWidth();
-                ImGui::TableSetColumnIndex(2);
-                ImGui::TextUnformatted(l2);
-                ImGui::TableSetColumnIndex(3);
-                ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x * 0.8f);
-                c2();
-                ImGui::PopItemWidth();
+                state_.ToggleMenuVisibility();
+            }
+
+            if (rendered_category != last_rendered_category_)
+            {
+                last_focus_index_ = -1;
+                pending_focus_index_ = rendered_category >= 0 ? 0 : -1;
+            }
+
+            // Left / Right arrow navigation to switch tabs smoothly
+            const bool nav_tab_next = ImGui::IsKeyPressed(ImGuiKey_PageDown, false) ||
+                                      (!ImGui::IsItemActive() && ImGui::IsKeyPressed(ImGuiKey_RightArrow, false));
+            const bool nav_tab_prev = ImGui::IsKeyPressed(ImGuiKey_PageUp, false) ||
+                                      (!ImGui::IsItemActive() && ImGui::IsKeyPressed(ImGuiKey_LeftArrow, false));
+            if (!popup_open && (nav_tab_next || nav_tab_prev))
+            {
+                if (nav_tab_next)
+                    active_category_ = (active_category_ + 1) % 5;
+                else if (nav_tab_prev)
+                    active_category_ = (active_category_ + 4) % 5;
+                pending_focus_index_ = 0;
+            }
+
+            const bool nav_down = ImGui::IsKeyPressed(ImGuiKey_DownArrow, false);
+            const bool nav_up = ImGui::IsKeyPressed(ImGuiKey_UpArrow, false);
+            if (!popup_open && (nav_down || nav_up) && last_focus_index_ < 0 && pending_focus_index_ < 0)
+            {
+                pending_focus_index_ = 0;
+                ImGuiIO &io = ImGui::GetIO();
+                const ImGuiKey key = nav_down ? ImGuiKey_DownArrow : ImGuiKey_UpArrow;
+                ImGuiKeyData &key_data = io.KeysData[key - ImGuiKey_NamedKey_BEGIN];
+                key_data.Down = false;
+                key_data.DownDuration = -1.0f;
+                key_data.DownDurationPrev = -1.0f;
+            }
+
+            int focus_index = 0;
+            int focused_index = -1;
+            std::vector<int> focus_items;
+            auto register_focus = [&](const std::function<void()> &draw)
+            {
+                const bool want_focus = (pending_focus_index_ == focus_index);
+                if (want_focus)
+                {
+                    ImGui::SetKeyboardFocusHere();
+                }
+                draw();
+                if (want_focus)
+                {
+                    pending_focus_index_ = -1;
+                }
+                if (ImGui::IsItemFocused())
+                {
+                    focused_index = focus_index;
+                }
+                focus_items.push_back(focus_index);
+                ++focus_index;
             };
+
+            const char *category_titles_cn[] = {"图传设置", "画面设置", "网络设置", "声音设置", "系统设置"};
+            const char *category_titles_en[] = {"Link Settings", "Display Settings", "Network Settings", "Audio Settings", "System Settings"};
+            const char *category_names_cn[] = {"图传", "画面", "网络", "声音", "系统"};
+            const char *category_names_en[] = {"Link", "Display", "Network", "Audio", "System"};
+
+            const ImVec2 window_pos = ImGui::GetWindowPos();
+            const float window_w = ImGui::GetWindowWidth();
+            const float window_h = ImGui::GetWindowHeight();
+            const float header_h = 52.0f;
+            const float sidebar_w = 175.0f;
+
+            ImDrawList *win_draw = ImGui::GetWindowDrawList();
+
+            // Header background solid fill & sharp separator line
+            win_draw->AddRectFilled(window_pos, ImVec2(window_pos.x + window_w, window_pos.y + header_h),
+                                    IM_COL32(30, 36, 50, 255), 16.0f, ImDrawFlags_RoundCornersTop);
+            win_draw->AddLine(ImVec2(window_pos.x + 1.0f, window_pos.y + header_h),
+                              ImVec2(window_pos.x + window_w - 1.0f, window_pos.y + header_h),
+                              IM_COL32(255, 255, 255, 60), 1.5f);
+
+            // Header Icon & Title
+            const ImTextureID cat_icon = dock_icons_[rendered_category == 4 ? 6 : rendered_category];
+            const float header_icon_size = 24.0f;
+            const float header_center_y = window_pos.y + header_h * 0.5f;
+            if (cat_icon)
+            {
+                win_draw->AddImage(cat_icon,
+                                   ImVec2(window_pos.x + 18.0f, header_center_y - header_icon_size * 0.5f),
+                                   ImVec2(window_pos.x + 18.0f + header_icon_size, header_center_y + header_icon_size * 0.5f));
+            }
+            const char *cat_title = is_cn ? category_titles_cn[rendered_category] : category_titles_en[rendered_category];
+            const ImVec2 cat_title_sz = ImGui::CalcTextSize(cat_title);
+            win_draw->AddText(ImVec2(window_pos.x + 50.0f, header_center_y - cat_title_sz.y * 0.5f),
+                              IM_COL32(255, 255, 255, 255), cat_title);
+
+            // Header Close / Back button
+            const char *back_label = is_cn ? "ESC  关闭" : "ESC  Close";
+            const ImVec2 back_btn_size(105.0f, 32.0f);
+            ImGui::SetCursorPos(ImVec2(window_w - back_btn_size.x - 16.0f, 10.0f));
+            if (ImGui::Button(back_label, back_btn_size))
+            {
+                state_.ToggleMenuVisibility();
+            }
+
+            // Sidebar background solid fill
+            win_draw->AddRectFilled(ImVec2(window_pos.x, window_pos.y + header_h),
+                                    ImVec2(window_pos.x + sidebar_w, window_pos.y + window_h),
+                                    IM_COL32(15, 18, 26, 255), 16.0f, ImDrawFlags_RoundCornersBottomLeft);
+
+            // Vertical divider between sidebar and content
+            win_draw->AddLine(ImVec2(window_pos.x + sidebar_w, window_pos.y + header_h),
+                              ImVec2(window_pos.x + sidebar_w, window_pos.y + window_h - 1.0f),
+                              IM_COL32(255, 255, 255, 50), 1.5f);
+
+            // Sidebar Categories
+            ImGui::SetCursorPos(ImVec2(10.0f, header_h + 12.0f));
+            ImGui::BeginGroup();
+            for (int i = 0; i < 5; ++i)
+            {
+                ImGui::PushID(200 + i);
+                const bool is_active = (rendered_category == i);
+                const char *label = is_cn ? category_names_cn[i] : category_names_en[i];
+                const ImTextureID icon = dock_icons_[i == 4 ? 6 : i];
+
+                const ImVec2 item_size(sidebar_w - 20.0f, 44.0f);
+                const bool pressed = ImGui::InvisibleButton("cat_item", item_size, ImGuiButtonFlags_EnableNav);
+                const bool item_focused = ImGui::IsItemFocused();
+                if (pressed || (item_focused && (ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_Space, false))))
+                {
+                    active_category_ = i;
+                    pending_focus_index_ = 0;
+                }
+                const bool hovered = ImGui::IsItemHovered();
+                const ImVec2 item_min = ImGui::GetItemRectMin();
+                const ImVec2 item_max = ImGui::GetItemRectMax();
+
+                if (is_active)
+                {
+                    win_draw->AddRectFilled(item_min, item_max, IM_COL32(245, 166, 35, 55), 10.0f);
+                    win_draw->AddRect(item_min, item_max, IM_COL32(245, 166, 35, 200), 10.0f, 0, 1.5f);
+                    win_draw->AddRectFilled(ImVec2(item_min.x + 3.0f, item_min.y + 9.0f),
+                                            ImVec2(item_min.x + 6.5f, item_max.y - 9.0f),
+                                            IM_COL32(245, 166, 35, 255), 1.5f);
+                }
+                else if (hovered || item_focused)
+                {
+                    win_draw->AddRectFilled(item_min, item_max, IM_COL32(255, 255, 255, 24), 10.0f);
+                }
+                if (item_focused)
+                {
+                    win_draw->AddRect(item_min, item_max, IM_COL32(245, 166, 35, 240), 10.0f, 0, 2.0f);
+                }
+
+                const float item_center_y = item_min.y + item_size.y * 0.5f;
+                const float sb_icon_sz = 24.0f;
+                if (icon)
+                {
+                    win_draw->AddImage(icon,
+                                       ImVec2(item_min.x + 12.0f, item_center_y - sb_icon_sz * 0.5f),
+                                       ImVec2(item_min.x + 12.0f + sb_icon_sz, item_center_y + sb_icon_sz * 0.5f));
+                }
+                const ImVec2 label_sz = ImGui::CalcTextSize(label);
+                win_draw->AddText(ImVec2(item_min.x + 44.0f, item_center_y - label_sz.y * 0.5f),
+                                  is_active ? IM_COL32(255, 255, 255, 255) : IM_COL32(200, 202, 208, 220),
+                                  label);
+                ImGui::PopID();
+                ImGui::Spacing();
+            }
+            ImGui::EndGroup();
+
+            // Right Content Area
+            const float content_x = sidebar_w + 14.0f;
+            const float content_y = header_h + 12.0f;
+            const float content_w = window_w - sidebar_w - 24.0f;
+            const float content_h = window_h - header_h - 20.0f;
+            ImGui::SetCursorPos(ImVec2(content_x, content_y));
+            ImGui::BeginChild("settings_content", ImVec2(content_w, content_h), false, ImGuiWindowFlags_NoScrollbar);
+
             const auto &channels = state_.Channels();
             const auto &bandwidths = state_.Bandwidths();
-            row_pair(is_cn ? "\u4fe1\u9053" : "Channel", [&]
-                     { register_focus(0, [&]
-                       {
-                         if (ImGui::BeginCombo("##channel", std::to_string(channels[state_.ChannelIndex()]).c_str())) {
-                             for (int i = 0; i < static_cast<int>(channels.size()); ++i) {
-                                 bool selected = (state_.ChannelIndex() == i);
-                                 if (ImGui::Selectable(std::to_string(channels[i]).c_str(), selected)) {
-                                     state_.SetChannelIndex(i);
-                                 }
-                                 if (selected) ImGui::SetItemDefaultFocus();
-                             }
-                             ImGui::EndCombo();
-                         } }); }, is_cn ? "\u9891\u5bbd" : "Bandwidth", [&]
-                     { register_focus(1, [&]
-                       {
-                         if (ImGui::BeginCombo("##bandwidth", bandwidths[state_.BandwidthIndex()])) {
-                             for (int i = 0; i < static_cast<int>(bandwidths.size()); ++i) {
-                                 bool selected = (state_.BandwidthIndex() == i);
-                                 if (ImGui::Selectable(bandwidths[i], selected)) {
-                                     state_.SetBandwidthIndex(i);
-                                 }
-                                 if (selected) ImGui::SetItemDefaultFocus();
-                             }
-                             ImGui::EndCombo();
-                         } }); });
-
             const auto &sky_modes = state_.SkyModes();
             const auto &ground_modes = state_.GroundModes();
-            row_pair(is_cn ? "\u5929\u7a7a\u7aef\u5206\u8fa8\u7387/\u5237\u65b0\u7387" : "Air Res/Refresh", [&]
-                     { register_focus(0, [&]
-                       {
-                         if (!sky_modes.empty() && ImGui::BeginCombo("##sky_mode", FormatVideoModeLabel(sky_modes[state_.SkyModeIndex()]).c_str())) {
-                             for (int i = 0; i < static_cast<int>(sky_modes.size()); ++i) {
-                                 bool selected = (state_.SkyModeIndex() == i);
-                                 if (ImGui::Selectable(FormatVideoModeLabel(sky_modes[i]).c_str(), selected)) {
-                                     state_.SetSkyModeIndex(i);
-                                 }
-                                 if (selected) ImGui::SetItemDefaultFocus();
-                             }
-                             ImGui::EndCombo();
-                         } }); }, is_cn ? "\u5730\u9762\u7aef\u5206\u8fa8\u7387/\u5237\u65b0\u7387" : "Ground Res/Refresh", [&]
-                     { register_focus(1, [&]
-                       {
-        if (!ground_modes.empty() && ImGui::BeginCombo("##ground_mode", FormatVideoModeLabel(ground_modes[state_.GroundModeIndex()]).c_str())) {
-            for (int i = 0; i < static_cast<int>(ground_modes.size()); ++i) {
-                bool selected = (state_.GroundModeIndex() == i);
-                if (ImGui::Selectable(FormatVideoModeLabel(ground_modes[i]).c_str(), selected)) {
-                    const auto &mode = ground_modes[i];
-                    const bool requires_warning = (mode.refresh > 60) && !state_.IsGroundModePersisted(mode.label);
-                    if (requires_warning) {
-                        pending_high_refresh_index_ = i;
-                        pending_high_refresh_label_ = mode.label;
-                        high_refresh_popup_pending_ = true;
-                    } else {
-                        state_.SetGroundModeIndex(i);
-                    }
-                }
-                if (selected) ImGui::SetItemDefaultFocus();
-            }
-            ImGui::EndCombo();
-        } }); });
-
-            const auto &bitrates = state_.Bitrates();
             const auto &powers = state_.PowerLevels();
             const auto &mcs_levels = state_.McsLevels();
-            row_pair(is_cn ? "\u7801\u7387(Mbps)" : "Bitrate (Mbps)", [&]
-                     { register_focus(0, [&]
-                       {
-                         if (ImGui::BeginCombo("##bitrate", std::to_string(bitrates[state_.BitrateIndex()]).c_str())) {
-                             for (int i = 0; i < static_cast<int>(bitrates.size()); ++i) {
-                                 bool selected = (state_.BitrateIndex() == i);
-                                 if (ImGui::Selectable(std::to_string(bitrates[i]).c_str(), selected)) {
-                                     state_.SetBitrateIndex(i);
-                                 }
-                                 if (selected) ImGui::SetItemDefaultFocus();
-                         }
-                            ImGui::EndCombo();
-                        } }); }, is_cn ? "\u5929\u7a7a\u7aef\u53d1\u5c04\u529f\u7387" : "Air TX Power", [&]
-                     { register_focus(1, [&]
-                       {
-                         if (ImGui::BeginCombo("##sky_power", std::to_string(powers[state_.SkyPowerIndex()]).c_str())) {
-                             for (int i = 0; i < static_cast<int>(powers.size()); ++i) {
-                                 bool selected = (state_.SkyPowerIndex() == i);
-                                 if (ImGui::Selectable(std::to_string(powers[i]).c_str(), selected)) {
-                                     state_.SetSkyPowerIndex(i);
-                                 }
-                                 if (selected) ImGui::SetItemDefaultFocus();
-                             }
-                             ImGui::EndCombo();
-                         } }); });
-
-            row_pair(is_cn ? "\u5929\u7a7a\u7aefMCS" : "Air MCS", [&]
-                     {
-                         if (mcs_levels.empty())
-                         {
-                             ImGui::TextUnformatted("--");
-                             return;
-                         }
-                         register_focus(0, [&]
-                         {
-                         const int current_mcs = mcs_levels[state_.SkyMcsIndex()];
-                         if (ImGui::BeginCombo("##sky_mcs", std::to_string(current_mcs).c_str()))
-                         {
-                             for (int i = 0; i < static_cast<int>(mcs_levels.size()); ++i)
-                             {
-                                 bool selected = (state_.SkyMcsIndex() == i);
-                                 if (ImGui::Selectable(std::to_string(mcs_levels[i]).c_str(), selected))
-                                 {
-                                     state_.SetSkyMcsIndex(i);
-                                 }
-                                 if (selected)
-                                     ImGui::SetItemDefaultFocus();
-                             }
-                             ImGui::EndCombo();
-                         } });
-                     }, is_cn ? "\u5730\u9762\u7aef\u53d1\u5c04\u529f\u7387" : "Ground TX Power", [&]
-                     { register_focus(1, [&]
-                       {
-                         if (ImGui::BeginCombo("##ground_power", std::to_string(powers[state_.GroundPowerIndex()]).c_str())) {
-                             for (int i = 0; i < static_cast<int>(powers.size()); ++i) {
-                                 bool selected = (state_.GroundPowerIndex() == i);
-                                 if (ImGui::Selectable(std::to_string(powers[i]).c_str(), selected)) {
-                                     state_.SetGroundPowerIndex(i);
-                                 }
-                                 if (selected) ImGui::SetItemDefaultFocus();
-                             }
-                             ImGui::EndCombo();
-                         } }); });
-
+            const auto &bitrates = state_.Bitrates();
             const auto &volume_levels = state_.VolumeLevels();
-            row_pair(is_cn ? "\u58f0\u97f3\u5f00\u5173" : "Sound", [&]
-                     { register_focus(0, [&]
-                       {
-                         bool enabled = state_.SoundEnabled();
-                         if (ImGui::Checkbox("##sound_enable", &enabled))
-                         {
-                             state_.SetSoundEnabled(enabled);
-                         } }); }, is_cn ? "\u97f3\u91cf" : "Volume", [&]
-                     {
-                         if (volume_levels.empty())
-                         {
-                             ImGui::TextUnformatted("--");
-                             return;
-                         }
-                         register_focus(1, [&]
-                         {
-                         int volume_index = state_.SoundVolumeIndex();
-                         if (volume_index < 0 || volume_index >= static_cast<int>(volume_levels.size()))
-                         {
-                             volume_index = std::max(0, std::min(static_cast<int>(volume_levels.size()) - 1, volume_index));
-                         }
-                         const std::string label = std::to_string(volume_levels[volume_index]) + "%";
-                         if (ImGui::BeginCombo("##sound_volume", label.c_str()))
-                         {
-                             for (int i = 0; i < static_cast<int>(volume_levels.size()); ++i)
-                             {
-                                 const std::string item_label = std::to_string(volume_levels[i]) + "%";
-                                 bool selected = (volume_index == i);
-                                 if (ImGui::Selectable(item_label.c_str(), selected))
-                                 {
-                                     state_.SetSoundVolumeIndex(i);
-                                 }
-                                 if (selected)
-                                     ImGui::SetItemDefaultFocus();
-                             }
-                             ImGui::EndCombo();
-                         } });
-                     });
-
-            row_pair(is_cn ? "\u81ea\u9002\u5e94\u94fe\u8def" : "Adaptive Link", [&]
-                     {
-                         register_focus(0, [&]
-                         {
-                             bool enabled = state_.AdaptiveLinkEnabled();
-                             if (ImGui::Checkbox("##adaptive_link", &enabled))
-                             {
-                                 state_.SetAdaptiveLinkEnabled(enabled);
-                             }
-                         });
-                     }, is_cn ? "\u574f\u5305\u7b56\u7565" : "Bad Frame Policy", [&]
-                     {
-                         register_focus(1, [&]
-                         {
-                             const char *label_cn[] = {"\u4e22\u5305", "\u5ffd\u7565"};
-                             const char *label_en[] = {"Drop", "Ignore"};
-                             const char *current = (state_.BadFrameIndex() == 0)
-                                                       ? (is_cn ? label_cn[0] : label_en[0])
-                                                       : (is_cn ? label_cn[1] : label_en[1]);
-                             if (ImGui::BeginCombo("##bad_frame", current))
-                             {
-                                 for (int i = 0; i < 2; ++i)
-                                 {
-                                     const char *label = is_cn ? label_cn[i] : label_en[i];
-                                     bool selected = (state_.BadFrameIndex() == i);
-                                     if (ImGui::Selectable(label, selected))
-                                     {
-                                         state_.SetBadFrameIndex(i);
-                                     }
-                                     if (selected)
-                                         ImGui::SetItemDefaultFocus();
-                                 }
-                                 ImGui::EndCombo();
-                             }
-                         });
-                     });
-
             const auto &buffer_levels = state_.BufferLevels();
             const auto &ack_time_levels = state_.AckTimeLevels();
             const auto &hdmi_attrs = state_.HdmiAttrs();
             const auto &network_modes = state_.NetworkModes();
-            auto render_hdmi_attr = [&]
+
+            if (ImGui::BeginTable("settings_grid", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_NoSavedSettings))
             {
-                if (hdmi_attrs.empty())
+                ImGui::TableSetupColumn("label", ImGuiTableColumnFlags_WidthStretch);
+                ImGui::TableSetupColumn("control", ImGuiTableColumnFlags_WidthFixed, 250.0f);
+
+                int row_counter = 0;
+                auto render_setting_row = [&](const char *label_text, const std::function<void()> &control_func, bool focusable = true)
                 {
-                    ImGui::TextUnformatted("--");
-                    return;
-                }
-                register_focus(1, [&]
-                {
-                    int idx = state_.HdmiAttrIndex();
-                    if (idx < 0 || idx >= static_cast<int>(hdmi_attrs.size()))
-                        idx = 0;
-                    const std::string value = hdmi_attrs[idx];
-                    const char *label = nullptr;
-                    if (value == "rgb")
+                    ImGui::TableNextRow(ImGuiTableRowFlags_None, 44.0f);
+                    const bool is_even = (row_counter % 2 == 0);
+
+                    // Visible card background
+                    const ImU32 row_bg = is_even ? IM_COL32(255, 255, 255, 14) : IM_COL32(255, 255, 255, 6);
+                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, row_bg);
+
+                    ImGui::TableSetColumnIndex(0);
+                    ImGui::AlignTextToFramePadding();
+                    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 10.0f);
+                    ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(235, 238, 245, 255));
+                    ImGui::TextUnformatted(label_text);
+                    ImGui::PopStyleColor();
+
+                    ImGui::TableSetColumnIndex(1);
+                    ImGui::SetNextItemWidth(-1.0f);
+                    if (focusable)
                     {
-                        label = "RGB";
-                    }
-                    else if (value == "422")
-                    {
-                        label = "YUV422";
+                        register_focus(control_func);
                     }
                     else
                     {
-                        label = "YUV420";
+                        control_func();
                     }
-                    if (ImGui::BeginCombo("##hdmi_attr", label))
+
+                    ++row_counter;
+                };
+
+                // ---- Category 0: 图传 / Link ----
+                if (rendered_category == 0)
+                {
+                    render_setting_row(is_cn ? "信道" : "Channel", [&]
                     {
-                        for (int i = 0; i < static_cast<int>(hdmi_attrs.size()); ++i)
+                        if (ImGui::BeginCombo("##channel", std::to_string(channels[state_.ChannelIndex()]).c_str()))
                         {
-                            const std::string item_value = hdmi_attrs[i];
-                            const char *item_label = nullptr;
-                            if (item_value == "rgb")
+                            for (int i = 0; i < static_cast<int>(channels.size()); ++i)
                             {
-                                item_label = "RGB";
+                                bool selected = (state_.ChannelIndex() == i);
+                                if (ImGui::Selectable(std::to_string(channels[i]).c_str(), selected))
+                                    state_.SetChannelIndex(i);
+                                if (selected)
+                                    ImGui::SetItemDefaultFocus();
                             }
-                            else if (item_value == "422")
+                            ImGui::EndCombo();
+                        }
+                    });
+
+                    render_setting_row(is_cn ? "频宽" : "Bandwidth", [&]
+                    {
+                        if (ImGui::BeginCombo("##bandwidth", bandwidths[state_.BandwidthIndex()]))
+                        {
+                            for (int i = 0; i < static_cast<int>(bandwidths.size()); ++i)
                             {
-                                item_label = "YUV422";
+                                bool selected = (state_.BandwidthIndex() == i);
+                                if (ImGui::Selectable(bandwidths[i], selected))
+                                    state_.SetBandwidthIndex(i);
+                                if (selected)
+                                    ImGui::SetItemDefaultFocus();
+                            }
+                            ImGui::EndCombo();
+                        }
+                    });
+
+                    render_setting_row(is_cn ? "天空端发射功率" : "Air TX Power", [&]
+                    {
+                        if (ImGui::BeginCombo("##sky_power", std::to_string(powers[state_.SkyPowerIndex()]).c_str()))
+                        {
+                            for (int i = 0; i < static_cast<int>(powers.size()); ++i)
+                            {
+                                bool selected = (state_.SkyPowerIndex() == i);
+                                if (ImGui::Selectable(std::to_string(powers[i]).c_str(), selected))
+                                    state_.SetSkyPowerIndex(i);
+                                if (selected)
+                                    ImGui::SetItemDefaultFocus();
+                            }
+                            ImGui::EndCombo();
+                        }
+                    });
+
+                    render_setting_row(is_cn ? "地面端发射功率" : "Ground TX Power", [&]
+                    {
+                        if (ImGui::BeginCombo("##ground_power", std::to_string(powers[state_.GroundPowerIndex()]).c_str()))
+                        {
+                            for (int i = 0; i < static_cast<int>(powers.size()); ++i)
+                            {
+                                bool selected = (state_.GroundPowerIndex() == i);
+                                if (ImGui::Selectable(std::to_string(powers[i]).c_str(), selected))
+                                    state_.SetGroundPowerIndex(i);
+                                if (selected)
+                                    ImGui::SetItemDefaultFocus();
+                            }
+                            ImGui::EndCombo();
+                        }
+                    });
+
+                    render_setting_row(is_cn ? "天空端MCS" : "Air MCS", [&]
+                    {
+                        if (mcs_levels.empty())
+                        {
+                            ImGui::TextUnformatted("--");
+                            return;
+                        }
+                        const int current_mcs = mcs_levels[state_.SkyMcsIndex()];
+                        if (ImGui::BeginCombo("##sky_mcs", std::to_string(current_mcs).c_str()))
+                        {
+                            for (int i = 0; i < static_cast<int>(mcs_levels.size()); ++i)
+                            {
+                                bool selected = (state_.SkyMcsIndex() == i);
+                                if (ImGui::Selectable(std::to_string(mcs_levels[i]).c_str(), selected))
+                                    state_.SetSkyMcsIndex(i);
+                                if (selected)
+                                    ImGui::SetItemDefaultFocus();
+                            }
+                            ImGui::EndCombo();
+                        }
+                    });
+
+                    render_setting_row(is_cn ? "自适应链路" : "Adaptive Link", [&]
+                    {
+                        bool enabled = state_.AdaptiveLinkEnabled();
+                        if (ImGui::Checkbox("##adaptive_link", &enabled))
+                        {
+                            state_.SetAdaptiveLinkEnabled(enabled);
+                        }
+                    });
+
+                    render_setting_row(is_cn ? "ACK时间" : "ACK Time", [&]
+                    {
+                        if (ack_time_levels.empty())
+                        {
+                            ImGui::TextUnformatted("--");
+                            return;
+                        }
+                        int idx = state_.AckTimeIndex();
+                        if (idx < 0 || idx >= static_cast<int>(ack_time_levels.size()))
+                            idx = 0;
+                        const std::string label = std::to_string(ack_time_levels[idx]);
+                        if (ImGui::BeginCombo("##ack_time", label.c_str()))
+                        {
+                            for (int i = 0; i < static_cast<int>(ack_time_levels.size()); ++i)
+                            {
+                                bool selected = (idx == i);
+                                if (ImGui::Selectable(std::to_string(ack_time_levels[i]).c_str(), selected))
+                                    state_.SetAckTimeIndex(i);
+                                if (selected)
+                                    ImGui::SetItemDefaultFocus();
+                            }
+                            ImGui::EndCombo();
+                        }
+                    });
+
+                    render_setting_row(is_cn ? "坏包策略" : "Bad Frame Policy", [&]
+                    {
+                        const char *label_cn[] = {"丢包", "忽略"};
+                        const char *label_en[] = {"Drop", "Ignore"};
+                        const char *current = (state_.BadFrameIndex() == 0)
+                                                  ? (is_cn ? label_cn[0] : label_en[0])
+                                                  : (is_cn ? label_cn[1] : label_en[1]);
+                        if (ImGui::BeginCombo("##bad_frame", current))
+                        {
+                            for (int i = 0; i < 2; ++i)
+                            {
+                                const char *label = is_cn ? label_cn[i] : label_en[i];
+                                bool selected = (state_.BadFrameIndex() == i);
+                                if (ImGui::Selectable(label, selected))
+                                    state_.SetBadFrameIndex(i);
+                                if (selected)
+                                    ImGui::SetItemDefaultFocus();
+                            }
+                            ImGui::EndCombo();
+                        }
+                    });
+                }
+
+                // ---- Category 1: 画面 / Display ----
+                else if (rendered_category == 1)
+                {
+                    render_setting_row(is_cn ? "天空端分辨率/刷新率" : "Air Res/Refresh", [&]
+                    {
+                        if (!sky_modes.empty() && ImGui::BeginCombo("##sky_mode", FormatVideoModeLabel(sky_modes[state_.SkyModeIndex()]).c_str()))
+                        {
+                            for (int i = 0; i < static_cast<int>(sky_modes.size()); ++i)
+                            {
+                                bool selected = (state_.SkyModeIndex() == i);
+                                if (ImGui::Selectable(FormatVideoModeLabel(sky_modes[i]).c_str(), selected))
+                                    state_.SetSkyModeIndex(i);
+                                if (selected)
+                                    ImGui::SetItemDefaultFocus();
+                            }
+                            ImGui::EndCombo();
+                        }
+                    });
+
+                    render_setting_row(is_cn ? "地面端分辨率/刷新率" : "Ground Res/Refresh", [&]
+                    {
+                        if (!ground_modes.empty() && ImGui::BeginCombo("##ground_mode", FormatVideoModeLabel(ground_modes[state_.GroundModeIndex()]).c_str()))
+                        {
+                            for (int i = 0; i < static_cast<int>(ground_modes.size()); ++i)
+                            {
+                                bool selected = (state_.GroundModeIndex() == i);
+                                if (ImGui::Selectable(FormatVideoModeLabel(ground_modes[i]).c_str(), selected))
+                                {
+                                    const auto &mode = ground_modes[i];
+                                    const bool requires_warning = (mode.refresh > 60) && !state_.IsGroundModePersisted(mode.label);
+                                    if (requires_warning)
+                                    {
+                                        pending_high_refresh_index_ = i;
+                                        pending_high_refresh_label_ = mode.label;
+                                        high_refresh_popup_pending_ = true;
+                                    }
+                                    else
+                                    {
+                                        state_.SetGroundModeIndex(i);
+                                    }
+                                }
+                                if (selected)
+                                    ImGui::SetItemDefaultFocus();
+                            }
+                            ImGui::EndCombo();
+                        }
+                    });
+
+                    render_setting_row(is_cn ? "码率 (Mbps)" : "Bitrate (Mbps)", [&]
+                    {
+                        if (ImGui::BeginCombo("##bitrate", std::to_string(bitrates[state_.BitrateIndex()]).c_str()))
+                        {
+                            for (int i = 0; i < static_cast<int>(bitrates.size()); ++i)
+                            {
+                                bool selected = (state_.BitrateIndex() == i);
+                                if (ImGui::Selectable(std::to_string(bitrates[i]).c_str(), selected))
+                                    state_.SetBitrateIndex(i);
+                                if (selected)
+                                    ImGui::SetItemDefaultFocus();
+                            }
+                            ImGui::EndCombo();
+                        }
+                    });
+
+                    render_setting_row(is_cn ? "缓存级别" : "Buffer Level", [&]
+                    {
+                        if (buffer_levels.empty())
+                        {
+                            ImGui::TextUnformatted("--");
+                            return;
+                        }
+                        int idx = state_.BufferLevelIndex();
+                        if (idx < 0 || idx >= static_cast<int>(buffer_levels.size()))
+                            idx = 0;
+                        const std::string label = std::to_string(buffer_levels[idx]);
+                        if (ImGui::BeginCombo("##buffer_level", label.c_str()))
+                        {
+                            for (int i = 0; i < static_cast<int>(buffer_levels.size()); ++i)
+                            {
+                                bool selected = (idx == i);
+                                if (ImGui::Selectable(std::to_string(buffer_levels[i]).c_str(), selected))
+                                    state_.SetBufferLevelIndex(i);
+                                if (selected)
+                                    ImGui::SetItemDefaultFocus();
+                            }
+                            ImGui::EndCombo();
+                        }
+                    });
+
+                    render_setting_row(is_cn ? "HDMI色彩格式" : "HDMI Colorspace", [&]
+                    {
+                        if (hdmi_attrs.empty())
+                        {
+                            ImGui::TextUnformatted("--");
+                            return;
+                        }
+                        int idx = state_.HdmiAttrIndex();
+                        if (idx < 0 || idx >= static_cast<int>(hdmi_attrs.size()))
+                            idx = 0;
+                        const std::string value = hdmi_attrs[idx];
+                        const char *label = (value == "rgb") ? "RGB" : ((value == "422") ? "YUV422" : "YUV420");
+                        if (ImGui::BeginCombo("##hdmi_attr", label))
+                        {
+                            for (int i = 0; i < static_cast<int>(hdmi_attrs.size()); ++i)
+                            {
+                                const std::string item_value = hdmi_attrs[i];
+                                const char *item_label = (item_value == "rgb") ? "RGB" : ((item_value == "422") ? "YUV422" : "YUV420");
+                                bool selected = (idx == i);
+                                if (ImGui::Selectable(item_label, selected))
+                                {
+                                    if (i != idx)
+                                    {
+                                        pending_hdmi_attr_index_ = i;
+                                        pending_hdmi_attr_value_ = item_value;
+                                        hdmi_attr_popup_pending_ = true;
+                                    }
+                                }
+                                if (selected)
+                                    ImGui::SetItemDefaultFocus();
+                            }
+                            ImGui::EndCombo();
+                        }
+                    });
+                }
+
+                // ---- Category 2: 网络 / Network ----
+                else if (rendered_category == 2)
+                {
+                    render_setting_row(is_cn ? "网络模式" : "Network mode", [&]
+                    {
+                        if (network_modes.empty())
+                        {
+                            ImGui::TextUnformatted("--");
+                            return;
+                        }
+                        int idx = state_.NetworkModeIndex();
+                        if (idx < 0 || idx >= static_cast<int>(network_modes.size()))
+                            idx = 0;
+                        const char *label = (idx == static_cast<int>(MenuState::NetworkMode::ConnectAp))
+                                                ? (is_cn ? "连接热点" : "Connect AP")
+                                                : "WFB";
+                        if (ImGui::BeginCombo("##network_mode", label))
+                        {
+                            for (int i = 0; i < static_cast<int>(network_modes.size()); ++i)
+                            {
+                                const char *item_label = (i == static_cast<int>(MenuState::NetworkMode::ConnectAp))
+                                                             ? (is_cn ? "连接热点" : "Connect AP")
+                                                             : "WFB";
+                                bool selected = (idx == i);
+                                if (ImGui::Selectable(item_label, selected))
+                                {
+                                    if (i == static_cast<int>(MenuState::NetworkMode::ConnectAp))
+                                    {
+                                        wifi_client_popup_pending_ = true;
+                                    }
+                                    else if (i != idx)
+                                    {
+                                        state_.SetNetworkModeIndex(i);
+                                    }
+                                }
+                                if (selected)
+                                    ImGui::SetItemDefaultFocus();
+                            }
+                            ImGui::EndCombo();
+                        }
+                    });
+
+                    render_setting_row(is_cn ? "热点配置" : "AP Config", [&]
+                    {
+                        const char *label = is_cn ? "编辑热点配置" : "Edit AP Config";
+                        if (ImGui::Button(label, ImVec2(-1, 0)))
+                        {
+                            wifi_client_popup_pending_ = true;
+                        }
+                    });
+
+                    const int net_idx = state_.NetworkModeIndex();
+                    const bool is_ap = (net_idx == static_cast<int>(MenuState::NetworkMode::ConnectAp));
+                    render_setting_row(is_cn ? "连接状态" : "Status", [&]
+                    {
+                        if (is_ap)
+                        {
+                            ImGui::TextColored(ImVec4(0.35f, 0.85f, 0.45f, 1.0f), "%s",
+                                               is_cn ? "热点模式 (Wi-Fi 客户端)" : "AP Mode (Client)");
+                        }
+                        else
+                        {
+                            ImGui::TextColored(ImVec4(0.40f, 0.75f, 1.0f, 1.0f), "%s",
+                                               is_cn ? "WFB 专网图传工作模式" : "WFB Dedicated Link");
+                        }
+                    }, false);
+                }
+
+                // ---- Category 3: 声音 / Audio ----
+                else if (rendered_category == 3)
+                {
+                    render_setting_row(is_cn ? "声音开关" : "Sound", [&]
+                    {
+                        bool enabled = state_.SoundEnabled();
+                        if (ImGui::Checkbox("##sound_enable", &enabled))
+                        {
+                            state_.SetSoundEnabled(enabled);
+                        }
+                    });
+
+                    render_setting_row(is_cn ? "音量" : "Volume", [&]
+                    {
+                        if (volume_levels.empty())
+                        {
+                            ImGui::TextUnformatted("--");
+                            return;
+                        }
+                        int volume_index = state_.SoundVolumeIndex();
+                        if (volume_index < 0 || volume_index >= static_cast<int>(volume_levels.size()))
+                            volume_index = std::max(0, std::min(static_cast<int>(volume_levels.size()) - 1, volume_index));
+                        const std::string label = std::to_string(volume_levels[volume_index]) + "%";
+                        if (ImGui::BeginCombo("##sound_volume", label.c_str()))
+                        {
+                            for (int i = 0; i < static_cast<int>(volume_levels.size()); ++i)
+                            {
+                                const std::string item_label = std::to_string(volume_levels[i]) + "%";
+                                bool selected = (volume_index == i);
+                                if (ImGui::Selectable(item_label.c_str(), selected))
+                                    state_.SetSoundVolumeIndex(i);
+                                if (selected)
+                                    ImGui::SetItemDefaultFocus();
+                            }
+                            ImGui::EndCombo();
+                        }
+                    });
+                }
+
+                // ---- Category 4: 系统 / System ----
+                else if (rendered_category == 4)
+                {
+                    render_setting_row(is_cn ? "固件模式" : "Firmware", [&]
+                    {
+                        const bool is_cc = state_.GetFirmwareType() == MenuState::FirmwareType::CCEdition;
+                        const char *label = is_cc ? "CC (UDP)" : (is_cn ? "官方 (SSH)" : "Official (SSH)");
+                        if (ImGui::BeginCombo("##firmware", label))
+                        {
+                            if (ImGui::Selectable("CC (UDP)", is_cc))
+                                state_.SetFirmwareType(MenuState::FirmwareType::CCEdition);
+                            const bool official = !is_cc;
+                            const char *official_label = is_cn ? "官方 (SSH)" : "Official (SSH)";
+                            if (ImGui::Selectable(official_label, official))
+                                state_.SetFirmwareType(MenuState::FirmwareType::Official);
+                            ImGui::EndCombo();
+                        }
+                    });
+
+                    render_setting_row(is_cn ? "系统语言" : "Language", [&]
+                    {
+                        const char *label = state_.GetLanguage() == MenuState::Language::CN ? "中文" : "English";
+                        if (ImGui::BeginCombo("##lang", label))
+                        {
+                            if (ImGui::Selectable("中文", state_.GetLanguage() == MenuState::Language::CN))
+                                state_.SetLanguage(MenuState::Language::CN);
+                            if (ImGui::Selectable("English", state_.GetLanguage() == MenuState::Language::EN))
+                                state_.SetLanguage(MenuState::Language::EN);
+                            ImGui::EndCombo();
+                        }
+                    });
+
+                    render_setting_row(is_cn ? "终端调试" : "Terminal", [&]
+                    {
+                        if (!toggle_terminal_)
+                        {
+                            ImGui::TextUnformatted("--");
+                            return;
+                        }
+                        const char *label = (terminal_visible_ && terminal_visible_())
+                                                ? (is_cn ? "关闭终端" : "Hide Terminal")
+                                                : (is_cn ? "打开终端" : "Open Terminal");
+                        if (ImGui::Button(label, ImVec2(-1, 0)))
+                        {
+                            toggle_terminal_();
+                        }
+                    });
+
+                    render_setting_row(is_cn ? "视频录制" : "Recording", [&]
+                    {
+                        const char *label = state_.Recording()
+                                                ? (is_cn ? "停止录像" : "Stop Recording")
+                                                : (is_cn ? "开启录像" : "Start Recording");
+                        if (ImGui::Button(label, ImVec2(-1, 0)))
+                        {
+                            state_.ToggleRecording();
+                        }
+                    });
+
+                    render_setting_row(is_cn ? "固件更新" : "Firmware Update", [&]
+                    {
+                        if (ImGui::Button(is_cn ? "检查并更新" : "Check & Update", ImVec2(-1, 0)))
+                        {
+                            namespace fs = std::filesystem;
+                            std::string found_path;
+                            fs::path flash_path("/flash/update_fpv.tar.gz");
+                            std::error_code ec;
+                            if (fs::exists(flash_path, ec))
+                            {
+                                found_path = flash_path.string();
                             }
                             else
                             {
-                                item_label = "YUV420";
-                            }
-                            bool selected = (idx == i);
-                            if (ImGui::Selectable(item_label, selected))
-                            {
-                                if (i != idx)
+                                fs::path media_root("/media");
+                                if (fs::exists(media_root, ec))
                                 {
-                                    pending_hdmi_attr_index_ = i;
-                                    pending_hdmi_attr_value_ = item_value;
-                                    hdmi_attr_popup_pending_ = true;
+                                    for (const auto &entry : fs::directory_iterator(media_root, ec))
+                                    {
+                                        if (!entry.is_directory())
+                                            continue;
+                                        fs::path candidate = entry.path() / "update_fpv.tar.gz";
+                                        if (fs::exists(candidate, ec))
+                                        {
+                                            found_path = candidate.string();
+                                            break;
+                                        }
+                                    }
                                 }
                             }
-                            if (selected)
-                                ImGui::SetItemDefaultFocus();
+                            if (!found_path.empty())
+                            {
+                                update_path_ = found_path;
+                                update_popup_pending_ = true;
+                            }
+                            else
+                            {
+                                update_missing_popup_pending_ = true;
+                            }
                         }
-                        ImGui::EndCombo();
-                    }
-                });
-            };
-            row_pair(is_cn ? "\u7f13\u5b58\u7ea7\u522b" : "Buffer Level", [&]
-                     {
-                         if (buffer_levels.empty())
-                         {
-                             ImGui::TextUnformatted("--");
-                             return;
-                         }
-                         register_focus(0, [&]
-                         {
-                             int idx = state_.BufferLevelIndex();
-                             if (idx < 0 || idx >= static_cast<int>(buffer_levels.size()))
-                             {
-                                 idx = 0;
-                             }
-                             const std::string label = std::to_string(buffer_levels[idx]);
-                             if (ImGui::BeginCombo("##buffer_level", label.c_str()))
-                             {
-                                 for (int i = 0; i < static_cast<int>(buffer_levels.size()); ++i)
-                                 {
-                                     const std::string item_label = std::to_string(buffer_levels[i]);
-                                     bool selected = (idx == i);
-                                     if (ImGui::Selectable(item_label.c_str(), selected))
-                                     {
-                                         state_.SetBufferLevelIndex(i);
-                                     }
-                                     if (selected)
-                                         ImGui::SetItemDefaultFocus();
-                                 }
-                                 ImGui::EndCombo();
-                             }
-                         });
-                     },
-                     "", [] {});
-            row_pair(is_cn ? "ACK\u65f6\u95f4" : "ACK Time", [&]
-                     {
-                         if (ack_time_levels.empty())
-                         {
-                             ImGui::TextUnformatted("--");
-                             return;
-                         }
-                         register_focus(0, [&]
-                         {
-                             int idx = state_.AckTimeIndex();
-                             if (idx < 0 || idx >= static_cast<int>(ack_time_levels.size()))
-                                 idx = 0;
-                             const std::string label = std::to_string(ack_time_levels[idx]);
-                             if (ImGui::BeginCombo("##ack_time", label.c_str()))
-                             {
-                                 for (int i = 0; i < static_cast<int>(ack_time_levels.size()); ++i)
-                                 {
-                                     const std::string item_label = std::to_string(ack_time_levels[i]);
-                                     bool selected = (idx == i);
-                                     if (ImGui::Selectable(item_label.c_str(), selected))
-                                         state_.SetAckTimeIndex(i);
-                                     if (selected)
-                                         ImGui::SetItemDefaultFocus();
-                                 }
-                                 ImGui::EndCombo();
-                             }
-                         });
-                     },
-                     is_cn ? "\u7f51\u7edc\u6a21\u5f0f" : "Network mode",
-                     [&]
-                     {
-                            if (network_modes.empty())
-                            {
-                                ImGui::TextUnformatted("--");
-                                return;
-                            }
-                            register_focus(1, [&]
-                            {
-                                int idx = state_.NetworkModeIndex();
-                                if (idx < 0 || idx >= static_cast<int>(network_modes.size()))
-                                    idx = 0;
-                                const char *label = (idx == static_cast<int>(MenuState::NetworkMode::ConnectAp))
-                                                        ? (is_cn ? "\u8fde\u63a5\u70ed\u70b9" : "Connect AP")
-                                                        : "WFB";
-                                if (ImGui::BeginCombo("##network_mode", label))
-                                {
-                                    for (int i = 0; i < static_cast<int>(network_modes.size()); ++i)
-                                    {
-                                        const char *item_label = (i == static_cast<int>(MenuState::NetworkMode::ConnectAp))
-                                                                     ? (is_cn ? "\u8fde\u63a5\u70ed\u70b9" : "Connect AP")
-                                                                     : "WFB";
-                                        bool selected = (idx == i);
-                                        if (ImGui::Selectable(item_label, selected))
-                                        {
-                                            if (i == static_cast<int>(MenuState::NetworkMode::ConnectAp))
-                                            {
-                                                wifi_client_popup_pending_ = true;
-                                            }
-                                            else if (i != idx)
-                                            {
-                                                state_.SetNetworkModeIndex(i);
-                                            }
-                                        }
-                                        if (selected)
-                                            ImGui::SetItemDefaultFocus();
-                                    }
-                                    ImGui::EndCombo();
-                                }
-                            });
-                     });
+                    });
 
-            row_pair(is_cn ? "\u56fa\u4ef6\u6a21\u5f0f" : "Firmware", [&]
-                     { register_focus(0, [&]
-                       {
-                         const bool is_cc = state_.GetFirmwareType() == MenuState::FirmwareType::CCEdition;
-                         if (ImGui::RadioButton(is_cn ? "CC (UDP)" : "CC (UDP)", is_cc)) {
-                             state_.SetFirmwareType(MenuState::FirmwareType::CCEdition);
-                         }
-                       }); }, is_cn ? "\u8bed\u8a00" : "Language", [&]
-                     { register_focus(1, [&]
-                       {
-                         const char *label = state_.GetLanguage() == MenuState::Language::CN ? "\u4e2d\u6587" : "English";
-                         if (ImGui::BeginCombo("##lang", label)) {
-                             if (ImGui::Selectable("\u4e2d\u6587", state_.GetLanguage() == MenuState::Language::CN)) {
-                                 state_.SetLanguage(MenuState::Language::CN);
-                             }
-                             if (ImGui::Selectable("English", state_.GetLanguage() == MenuState::Language::EN)) {
-                                 state_.SetLanguage(MenuState::Language::EN);
-                             }
-                             ImGui::EndCombo();
-                         } }); });
-
-
-
-            row_pair("", [&]
-                     { register_focus(0, [&]
-                       {
-                           const bool is_official = state_.GetFirmwareType() == MenuState::FirmwareType::Official;
-                           if (ImGui::RadioButton(is_cn ? "\u5b98\u65b9 (SSH)" : "Official (SSH)", is_official)) {
-                               state_.SetFirmwareType(MenuState::FirmwareType::Official);
-                           }
-                       }); }, is_cn ? "HDMI\u8272\u5f69\u683c\u5f0f" : "HDMI colorspace", render_hdmi_attr);
-            row_pair("",
-                     [&]
-                     {
-                         if (!toggle_terminal_)
-                         {
-                             ImGui::Dummy(ImVec2(-1, 0));
-                             return;
-                         }
-                         register_focus(0, [&]
-                         {
-                             const char *label = (terminal_visible_ && terminal_visible_())
-                                                     ? (is_cn ? "\u5173\u95ed\u7ec8\u7aef" : "Hide Terminal")
-                                                     : (is_cn ? "\u6253\u5f00\u7ec8\u7aef" : "Open Terminal");
-                             if (ImGui::Button(label, ImVec2(-1, 0)))
-                             {
-                                 toggle_terminal_();
-                             }
-                         });
-                     },
-                     "",
-                     [&]
-                     {
-                         register_focus(1, [&]
-                         {
-                             const char *label = state_.Recording()
-                                                     ? (is_cn ? "\u505c\u6b62\u5f55\u50cf" : "Stop Recording")
-                                                     : (is_cn ? "\u5f00\u542f\u5f55\u50cf" : "Start Recording");
-                             if (ImGui::Button(label, ImVec2(-1, 0)))
-                             {
-                                 state_.ToggleRecording();
-                             }
-                         });
-                     });
-
-            row_pair("",
-                     [&]
-                     {
-                        register_focus(0, [&]
+                    render_setting_row(is_cn ? "媒体中心" : "Media Center", [&]
+                    {
+                        if (ImGui::Button(is_cn ? "打开 KODI" : "Open KODI", ImVec2(-1, 0)))
                         {
-                            if (ImGui::Button(is_cn ? "\u66f4\u65b0\u56fa\u4ef6" : "Update", ImVec2(-1, 0)))
-                            {
-                                namespace fs = std::filesystem;
-                                std::string found_path;
-                                fs::path flash_path("/flash/update_fpv.tar.gz");
-                                std::error_code ec;
-                                if (fs::exists(flash_path, ec))
-                                {
-                                    found_path = flash_path.string();
-                                }
-                                else
-                                {
-                                    fs::path media_root("/media");
-                                    if (fs::exists(media_root, ec))
-                                    {
-                                        for (const auto &entry : fs::directory_iterator(media_root, ec))
-                                        {
-                                            if (!entry.is_directory())
-                                                continue;
-                                            fs::path candidate = entry.path() / "update_fpv.tar.gz";
-                                            if (fs::exists(candidate, ec))
-                                            {
-                                                found_path = candidate.string();
-                                                break;
-                                            }
-                                        }
-                                    }
-                                }
-                                if (!found_path.empty())
-                                {
-                                    update_path_ = found_path;
-                                    update_popup_pending_ = true;
-                                }
-                                else
-                                {
-                                    update_missing_popup_pending_ = true;
-                                }
-                            }
-                        });
-                     },
-                     "",
-                     [&]
-                     {
-                        register_focus(1, [&]
-                        {
-                            if (ImGui::Button(is_cn ? "\u6253\u5f00 KODI" : "Open KODI", ImVec2(-1, 0)))
-                            {
-                                kodi_popup_requested = true;
-                            }
-                        });
-                     });
+                            kodi_popup_requested = true;
+                        }
+                    });
 
-            row_pair("",
-                     [&]
-                     {
-                        register_focus(0, [&]
+                    render_setting_row(is_cn ? "双系统切换" : "Dual Boot", [&]
+                    {
+                        if (ImGui::Button(is_cn ? "启动到安卓" : "Boot to Android", ImVec2(-1, 0)))
                         {
-                            const char *label = is_cn ? "\u7f16\u8f91\u70ed\u70b9\u914d\u7f6e" : "Edit AP Config";
-                            if (ImGui::Button(label, ImVec2(-1, 0)))
-                            {
-                                wifi_client_popup_pending_ = true;
-                            }
-                        });
-                     },
-                     "",
-                     [&]
-                     {
-                        register_focus(1, [&]
-                        {
-                            if (ImGui::Button(is_cn ? "\u542f\u52a8\u5230\u5b89\u5353" : "Boot to Android", ImVec2(-1, 0)))
-                            {
-                                std::system("/sbin/rebootfromnand;reboot");
-                                running_flag = false;
-                            }
-                        });
-                     });
-
-            row_pair("",
-                     [&]
-                     {
-                         ImGui::Dummy(ImVec2(-1, 0));
-                     },
-                     "",
-                     [&]
-                     {
-                         register_focus(1, [&]
-                         {
-                             if (ImGui::Button(is_cn ? "\u786e\u8ba4" : "OK", ImVec2(-1, 0)))
-                             {
-                                 state_.ToggleMenuVisibility();
-                             }
-                         });
-                     });
-
-            ImGui::EndTable();
-            if (!popup_open && focused_index >= 0 && (nav_down || nav_up))
-            {
-                const int col = index_to_col[focused_index];
-                const int pos = index_to_pos[focused_index];
-                const auto &col_list = focus_columns[col];
-                const auto &other_list = focus_columns[1 - col];
-                // Edge wrap: use actual focus lists so new items don't need manual index updates.
-                bool wrapped = false;
-                if (nav_down && pos == static_cast<int>(col_list.size()) - 1 && !other_list.empty())
-                {
-                    pending_focus_index_ = other_list.front();
-                    wrapped = true;
+                            std::system("/sbin/rebootfromnand;reboot");
+                            running_flag = false;
+                        }
+                    });
                 }
-                else if (nav_up && pos == 0 && !other_list.empty())
-                {
-                    pending_focus_index_ = other_list.back();
-                    wrapped = true;
-                }
-                if (wrapped)
-                {
-                    // Prevent ImGui default nav from moving focus inside the same column first.
-                    ImGuiIO &io = ImGui::GetIO();
-                    const ImGuiKey key = nav_down ? ImGuiKey_DownArrow : ImGuiKey_UpArrow;
-                    ImGuiKeyData &key_data = io.KeysData[key - ImGuiKey_NamedKey_BEGIN];
-                    key_data.Down = false;
-                    key_data.DownDuration = -1.0f;
-                    key_data.DownDurationPrev = -1.0f;
-                }
+
+                ImGui::EndTable();
             }
-            // When adding/removing focusable widgets, keep the registration order
-            // aligned with the table layout for predictable Up/Down navigation.
-            last_focus_columns_ = focus_columns;
-            last_focus_index_to_col_ = index_to_col;
-            last_focus_index_to_pos_ = index_to_pos;
+            ImGui::EndChild();
+
+            // Up/Down navigation wrapping with deadlock recovery failsafe
+            if (!popup_open && (nav_down || nav_up) && !focus_items.empty())
+            {
+                int next_idx = 0;
+                if (focused_index >= 0)
+                {
+                    if (nav_down)
+                        next_idx = (focused_index + 1) % static_cast<int>(focus_items.size());
+                    else if (nav_up)
+                        next_idx = (focused_index - 1 + static_cast<int>(focus_items.size())) % static_cast<int>(focus_items.size());
+                }
+                pending_focus_index_ = next_idx;
+                ImGuiIO &io = ImGui::GetIO();
+                const ImGuiKey key = nav_down ? ImGuiKey_DownArrow : ImGuiKey_UpArrow;
+                ImGuiKeyData &key_data = io.KeysData[key - ImGuiKey_NamedKey_BEGIN];
+                key_data.Down = false;
+                key_data.DownDuration = -1.0f;
+                key_data.DownDurationPrev = -1.0f;
+            }
             if (focused_index >= 0)
             {
                 last_focus_index_ = focused_index;
             }
+
+            // Draw crisp fully closed outer border for the Settings window
+            win_draw->AddRect(window_pos, ImVec2(window_pos.x + window_w, window_pos.y + window_h),
+                              IM_COL32(255, 255, 255, 75), 16.0f, 0, 1.5f);
         }
-        ImGui::PopStyleVar();
+        ImGui::End();
+        ImGui::PopStyleColor(1);
+        ImGui::PopStyleVar(3);
+    }
 
         if (high_refresh_popup_pending_ && pending_high_refresh_index_ >= 0)
         {
@@ -1452,6 +1792,12 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
         if (ImGui::BeginPopupModal("confirm_high_refresh", nullptr,
                                    ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar))
         {
+            if (ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+            {
+                pending_high_refresh_index_ = -1;
+                pending_high_refresh_label_.clear();
+                ImGui::CloseCurrentPopup();
+            }
             const char *msg = is_cn ? "\u8be5\u5206\u8fa8\u7387\u5237\u65b0\u7387\u8d85\u8fc760Hz\uff0c\u53ef\u80fd\u5bfc\u81f4\u9ed1\u5c4f\uff0c\u662f\u5426\u7ee7\u7eed\uff1f"
                                     : "This refresh rate exceeds 60Hz and may cause a black screen. Continue?";
             ImGui::TextWrapped("%s", msg);
@@ -1493,6 +1839,11 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
         if (ImGui::BeginPopupModal("confirm_high_refresh_persist", nullptr,
                                    ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar))
         {
+            if (ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+            {
+                pending_high_refresh_label_.clear();
+                ImGui::CloseCurrentPopup();
+            }
             const char *msg = is_cn ? "\u662f\u5426\u4ee5\u540e\u9ed8\u8ba4\u4f7f\u7528\u8be5\u9ad8\u5237\u65b9\u6848\uff1f"
                                     : "Use this high refresh rate by default in the future?";
             ImGui::TextWrapped("%s", msg);
@@ -1534,6 +1885,12 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
         if (ImGui::BeginPopupModal("confirm_hdmi_attr", nullptr,
                                    ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar))
         {
+            if (ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+            {
+                pending_hdmi_attr_index_ = -1;
+                pending_hdmi_attr_value_.clear();
+                ImGui::CloseCurrentPopup();
+            }
             const char *msg = is_cn ? "\u5207\u6362 HDMI \u8272\u5f69\u683c\u5f0f\u53ef\u80fd\u5bfc\u81f4\u9ed1\u5c4f\uff0c\u662f\u5426\u7ee7\u7eed\uff1f"
                                     : "Switching HDMI colorspace may cause a black screen. Continue?";
             ImGui::TextWrapped("%s", msg);
@@ -1575,6 +1932,10 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
         if (ImGui::BeginPopupModal("confirm_hdmi_attr_persist", nullptr,
                                    ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar))
         {
+            if (ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+            {
+                ImGui::CloseCurrentPopup();
+            }
             const char *msg = is_cn ? "\u662f\u5426\u4ee5\u540e\u9ed8\u8ba4\u4f7f\u7528\u8be5\u8272\u5f69\u683c\u5f0f\uff1f"
                                     : "Use this colorspace by default in the future?";
             ImGui::TextWrapped("%s", msg);
@@ -1614,7 +1975,15 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
         if (ImGui::BeginPopupModal("configure_wifi_client", nullptr,
                                    ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar))
         {
-            const char *title = is_cn ? "\u8fde\u63a5\u70ed\u70b9" : "Connect AP";
+            if (ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+            {
+                wifi_step_ = 0;
+                wifi_ifaces_.clear();
+                wifi_connecting_ = false;
+                ImGui::CloseCurrentPopup();
+            }
+
+            const char *title = is_cn ? "Wi-Fi 连接向导" : "Wi-Fi Connect Wizard";
 
             // 每帧刷新当前网卡的实时状态（轻量：读 iw link）
             wifi_status_timer_ += ImGui::GetIO().DeltaTime;
@@ -1651,24 +2020,46 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
                 }
             }
 
-            ImGui::TextUnformatted(title);
+            ImGui::TextColored(ImVec4(0.96f, 0.65f, 0.14f, 1.0f), "●  %s", title);
             ImGui::Spacing();
 
             // ---- 步骤指示 ----
             {
-                const char *steps_cn[] = {"1 \u9009\u7f51\u5361", "2 \u9009\u70ed\u70b9", "3 \u5bc6\u7801", "4 \u8fde\u63a5"};
-                const char *steps_en[] = {"1 Iface", "2 AP", "3 Password", "4 Connect"};
+                const char *steps_cn[] = {"1 选网卡", "2 选热点", "3 输密码", "4 连接"};
+                const char *steps_en[] = {"1 Iface", "2 Select AP", "3 Password", "4 Connect"};
                 const char **steps = is_cn ? steps_cn : steps_en;
                 for (int i = 0; i < 4; ++i)
                 {
-                    if (i)
-                        ImGui::SameLine();
-                    bool cur = (i == wifi_step_);
-                    bool done = (i < wifi_step_);
-                    ImVec4 col = cur ? ImVec4(0.35f, 0.75f, 1.0f, 1.0f)
-                                     : (done ? ImVec4(0.45f, 0.85f, 0.45f, 1.0f)
-                                             : ImVec4(0.55f, 0.55f, 0.55f, 1.0f));
-                    ImGui::TextColored(col, "%s", steps[i]);
+                    if (i > 0)
+                    {
+                        ImGui::SameLine(0.0f, 8.0f);
+                        ImGui::TextColored(ImVec4(0.45f, 0.45f, 0.50f, 1.0f), ">");
+                        ImGui::SameLine(0.0f, 8.0f);
+                    }
+                    const bool cur = (i == wifi_step_);
+                    const bool done = (i < wifi_step_);
+                    if (cur)
+                    {
+                        ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(245, 166, 35, 45));
+                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(245, 166, 35, 65));
+                        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(255, 255, 255, 255));
+                        ImGui::SmallButton(steps[i]);
+                        ImGui::PopStyleColor(3);
+                    }
+                    else if (done)
+                    {
+                        ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(40, 180, 90, 35));
+                        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(80, 220, 120, 255));
+                        ImGui::SmallButton(steps[i]);
+                        ImGui::PopStyleColor(2);
+                    }
+                    else
+                    {
+                        ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(255, 255, 255, 10));
+                        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(150, 155, 165, 200));
+                        ImGui::SmallButton(steps[i]);
+                        ImGui::PopStyleColor(2);
+                    }
                 }
             }
             ImGui::Separator();
@@ -1678,8 +2069,8 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
             if (wifi_step_ == 0)
             {
                 ImGui::TextWrapped("%s", is_cn
-                    ? "\u9009\u62e9\u7528\u4e8e\u8fde\u63a5\u70ed\u70b9\u7684\u65e0\u7ebf\u7f51\u5361\uff08WFB \u865a\u62df\u5361\u4e0d\u5728\u5217\u8868\u4e2d\uff09\u3002"
-                    : "Select the wireless interface used to connect the AP (WFB virtual interfaces are excluded).");
+                    ? "选择用于连接热点的无线网卡（WFB 虚拟卡已被过滤）。"
+                    : "Select the wireless interface used to connect the AP (WFB virtual interfaces excluded).");
 
                 if (wifi_ifaces_.empty())
                 {
@@ -1692,9 +2083,9 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
                 if (wifi_ifaces_.empty())
                 {
                     ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.35f, 1.0f), "%s",
-                        is_cn ? "\u6ca1\u6709\u627e\u5230\u53ef\u7528\u7684\u65e0\u7ebf\u7f51\u5361" : "No usable wireless interface");
+                        is_cn ? "没有找到可用的无线网卡" : "No usable wireless interface found");
                     ImGui::Spacing();
-                    if (ImGui::Button(is_cn ? "\u5237\u65b0" : "Refresh", ImVec2(120, 0)))
+                    if (ImGui::Button(is_cn ? "刷新" : "Refresh", ImVec2(120, 0)))
                         wifi_ifaces_ = WifiController::ListIfaces();
                 }
                 else
@@ -1716,7 +2107,7 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
                 bool can_next = !wifi_ifaces_.empty();
                 if (!can_next)
                     ImGui::BeginDisabled();
-                if (ImGui::Button(is_cn ? "\u4e0b\u4e00\u6b65" : "Next", ImVec2(130, 0)))
+                if (ImGui::Button(is_cn ? "下一步" : "Next", ImVec2(130, 0)))
                 {
                     wifi_.SetIface(wifi_ifaces_[wifi_iface_idx_].name);
                     wifi_aps_.clear();
@@ -1726,7 +2117,7 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
                 if (!can_next)
                     ImGui::EndDisabled();
                 ImGui::SameLine();
-                if (ImGui::Button(is_cn ? "\u53d6\u6d88" : "Cancel", ImVec2(130, 0)))
+                if (ImGui::Button(is_cn ? "取消" : "Cancel", ImVec2(130, 0)))
                 {
                     wifi_step_ = 0;
                     ImGui::CloseCurrentPopup();
@@ -1736,7 +2127,7 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
             // ---- 步骤 1：扫描并选 AP ----
             else if (wifi_step_ == 1)
             {
-                ImGui::Text(is_cn ? "\u7f51\u5361\uff1a%s\uff08%s\uff09" : "Interface: %s (%s)",
+                ImGui::Text(is_cn ? "网卡：%s（%s）" : "Interface: %s (%s)",
                             wifi_.Iface().c_str(),
                             wifi_ifaces_.empty() ? "-" : wifi_ifaces_[wifi_iface_idx_].bands.c_str());
 
@@ -1750,47 +2141,52 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
                 if (wifi_scanning_)
                 {
                     ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1.0f), "%s",
-                        is_cn ? "\u6b63\u5728\u626b\u63cf..." : "Scanning...");
+                        is_cn ? "正在扫描周边 Wi-Fi 热点..." : "Scanning for Wi-Fi APs...");
                 }
                 else if (wifi_aps_.empty())
                 {
                     ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.35f, 1.0f), "%s",
-                        is_cn ? "\u672a\u626b\u5230\u70ed\u70b9\uff08\u8be5\u7f51\u5361\u9891\u6bb5\u53ef\u80fd\u4e0d\u8986\u76d6\u76ee\u6807 AP\uff09"
-                              : "No AP found (this card's band may not cover the target AP)");
+                        is_cn ? "未扫描到热点（网卡频段可能不匹配）"
+                              : "No AP found (check card band compatibility)");
                 }
                 else
                 {
-                    ImGui::Text("%s %d", is_cn ? "\u626b\u5230" : "Found", static_cast<int>(wifi_aps_.size()));
+                    ImGui::Text("%s %d %s", is_cn ? "发现" : "Found", static_cast<int>(wifi_aps_.size()), is_cn ? "个热点" : "APs");
                 }
 
-                ImGui::BeginChild("ap_list", ImVec2(520, 220), true);
+                ImGui::BeginChild("ap_list", ImVec2(520, 230), true);
                 for (int i = 0; i < static_cast<int>(wifi_aps_.size()); ++i)
                 {
                     const WifiAp &ap = wifi_aps_[i];
-                    // 信号强度条
-                    float q = (ap.signal_dbm <= 0) ? ((ap.signal_dbm + 100) / 70.0f)
-                                                   : (ap.signal_dbm / 100.0f);
-                    if (q < 0.0f) q = 0.0f;
-                    if (q > 1.0f) q = 1.0f;
-                    ImVec4 sc = q > 0.6f ? ImVec4(0.4f, 0.9f, 0.4f, 1.0f)
-                              : q > 0.3f ? ImVec4(1.0f, 0.85f, 0.3f, 1.0f)
-                                         : ImVec4(1.0f, 0.45f, 0.35f, 1.0f);
-                    // ConnMan 的 Strength 是 0-100，不是 dBm
                     int pct = ap.signal_dbm;
-                    if (pct < 0) pct = 0;      // 兼容旧格式(-dBm)
+                    if (pct < 0) pct = 0;
                     if (pct > 100) pct = 100;
+
+                    ImVec4 sc = (pct >= 60) ? ImVec4(0.35f, 0.85f, 0.45f, 1.0f)
+                              : (pct >= 30) ? ImVec4(1.0f, 0.82f, 0.30f, 1.0f)
+                                            : ImVec4(1.0f, 0.45f, 0.35f, 1.0f);
                     const char *st_tag = "";
                     if (ap.state == "ready" || ap.state == "online")
-                        st_tag = "  [\u5df2\u8fde]";
+                        st_tag = is_cn ? "  [已连]" : "  [Connected]";
                     else if (ap.state == "failure")
-                        st_tag = "  [\u5931\u8d25]";
+                        st_tag = is_cn ? "  [失败]" : "  [Failed]";
+
                     char line[256];
-                    std::snprintf(line, sizeof(line), "%s%s   %d%%%s",
-                                  ap.ssid.c_str(), ap.secure ? "  [\u9501]" : "",
+                    std::snprintf(line, sizeof(line), "%-26s %s   %3d%%%s",
+                                  ap.ssid.c_str(),
+                                  ap.secure ? (is_cn ? "[加密]" : "[Lock]") : (is_cn ? "[开放]" : "[Open]"),
                                   pct, st_tag);
+
+                    const bool selected = (wifi_ap_idx_ == i);
                     ImGui::PushStyleColor(ImGuiCol_Text, sc);
-                    if (ImGui::Selectable(line, wifi_ap_idx_ == i))
+                    if (ImGui::Selectable(line, selected, ImGuiSelectableFlags_None, ImVec2(0, 24.0f)))
+                    {
                         wifi_ap_idx_ = i;
+                    }
+                    if (selected)
+                    {
+                        ImGui::SetItemDefaultFocus();
+                    }
                     ImGui::PopStyleColor();
                 }
                 ImGui::EndChild();
@@ -1799,7 +2195,7 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
                 ImGui::Separator();
                 ImGui::Spacing();
 
-                if (ImGui::Button(is_cn ? "\u91cd\u65b0\u626b\u63cf" : "Rescan", ImVec2(120, 0)))
+                if (ImGui::Button(is_cn ? "重新扫描" : "Rescan", ImVec2(120, 0)))
                 {
                     wifi_scan_requested_ = false;
                     wifi_aps_.clear();
@@ -1808,22 +2204,23 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
                 bool has_ap = !wifi_aps_.empty();
                 if (!has_ap)
                     ImGui::BeginDisabled();
-                if (ImGui::Button(is_cn ? "\u4e0b\u4e00\u6b65" : "Next", ImVec2(120, 0)))
+                if (ImGui::Button(is_cn ? "下一步" : "Next", ImVec2(120, 0)))
                 {
                     std::snprintf(wifi_client_ssid_, sizeof(wifi_client_ssid_), "%s",
                                   wifi_aps_[wifi_ap_idx_].ssid.c_str());
                     wifi_step_ = 2;
+                    wifi_pwd_focus_ = 1;
                 }
                 if (!has_ap)
                     ImGui::EndDisabled();
                 ImGui::SameLine();
-                if (ImGui::Button(is_cn ? "\u4e0a\u4e00\u6b65" : "Back", ImVec2(120, 0)))
+                if (ImGui::Button(is_cn ? "上一步" : "Back", ImVec2(120, 0)))
                 {
                     wifi_step_ = 0;
                     wifi_ifaces_.clear();
                 }
                 ImGui::SameLine();
-                if (ImGui::Button(is_cn ? "\u53d6\u6d88" : "Cancel", ImVec2(100, 0)))
+                if (ImGui::Button(is_cn ? "取消" : "Cancel", ImVec2(100, 0)))
                 {
                     wifi_step_ = 0;
                     ImGui::CloseCurrentPopup();
@@ -1833,28 +2230,33 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
             // ---- 步骤 2：输密码 ----
             else if (wifi_step_ == 2)
             {
-                ImGui::Text(is_cn ? "\u76ee\u6807\u70ed\u70b9\uff1a%s" : "Target AP: %s", wifi_client_ssid_);
+                ImGui::Text(is_cn ? "目标热点：%s" : "Target AP: %s", wifi_client_ssid_);
                 ImGui::Spacing();
-                ImGui::TextUnformatted(is_cn ? "\u5bc6\u7801" : "Password");
-                ImGui::SetNextItemWidth(420);
+                ImGui::TextUnformatted(is_cn ? "请输入密码：" : "Enter Password:");
+                ImGui::SetNextItemWidth(360);
                 if (wifi_pwd_focus_ == 1)
                 {
                     ImGui::SetKeyboardFocusHere();
                     wifi_pwd_focus_ = 0;
                 }
+                ImGuiInputTextFlags input_flags = ImGuiInputTextFlags_EnterReturnsTrue;
+                if (!wifi_show_password_)
+                {
+                    input_flags |= ImGuiInputTextFlags_Password;
+                }
                 bool enter = ImGui::InputText("##password", wifi_client_password_,
-                                              sizeof(wifi_client_password_),
-                                              ImGuiInputTextFlags_Password |
-                                              ImGuiInputTextFlags_EnterReturnsTrue);
+                                              sizeof(wifi_client_password_), input_flags);
+                ImGui::SameLine();
+                ImGui::Checkbox(is_cn ? "显示密码" : "Show", &wifi_show_password_);
                 ImGui::TextDisabled("%s", is_cn
-                    ? "\uff08\u5f00\u653e\u70ed\u70b9\u7559\u7a7a\u5373\u53ef\uff09"
+                    ? "（开放热点留空即可直接连接）"
                     : "(leave empty for open network)");
 
                 ImGui::Spacing();
                 ImGui::Separator();
                 ImGui::Spacing();
 
-                if (ImGui::Button(is_cn ? "\u8fde\u63a5" : "Connect", ImVec2(130, 0)) || enter)
+                if (ImGui::Button(is_cn ? "连接" : "Connect", ImVec2(130, 0)) || enter)
                 {
                     wifi_has_result_ = false;
                     wifi_result_msg_.clear();
@@ -1862,10 +2264,10 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
                     wifi_.StartConnect(wifi_client_ssid_, wifi_client_password_, wifi_.Iface());
                 }
                 ImGui::SameLine();
-                if (ImGui::Button(is_cn ? "\u4e0a\u4e00\u6b65" : "Back", ImVec2(130, 0)))
+                if (ImGui::Button(is_cn ? "上一步" : "Back", ImVec2(130, 0)))
                     wifi_step_ = 1;
                 ImGui::SameLine();
-                if (ImGui::Button(is_cn ? "\u53d6\u6d88" : "Cancel", ImVec2(100, 0)))
+                if (ImGui::Button(is_cn ? "取消" : "Cancel", ImVec2(100, 0)))
                 {
                     wifi_step_ = 0;
                     ImGui::CloseCurrentPopup();
@@ -1878,55 +2280,73 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
                 if (wifi_connecting_ || (!wifi_has_result_ && wifi_result_msg_.empty()))
                 {
                     ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1.0f), "%s",
-                        is_cn ? "\u6b63\u5728\u8fde\u63a5..." : "Connecting...");
+                        is_cn ? "正在连接..." : "Connecting...");
                     ImGui::Spacing();
+                    ImGui::Text(is_cn ? "正在连接至：%s" : "Connecting to: %s", wifi_client_ssid_);
                     ImGui::TextDisabled("%s", is_cn
-                        ? "\u6b63\u5728\u901a\u77e5 ConnMan \u8fde\u63a5\u70ed\u70b9\u5e76\u7b49\u5f85 DHCP\uff0c\u6700\u591a 30 \u79d2"
+                        ? "正在通知 ConnMan 连接热点并等待 DHCP，最多 30 秒"
                         : "Asking ConnMan to connect and waiting for DHCP (up to 30s)");
+                    ImGui::Spacing();
+                    ImGui::Separator();
+                    ImGui::Spacing();
+                    if (ImGui::Button(is_cn ? "取消连接" : "Cancel Connection", ImVec2(140, 0)))
+                    {
+                        wifi_connecting_ = false;
+                        wifi_has_result_ = false;
+                        wifi_step_ = 1;
+                    }
                 }
                 else if (wifi_result_ok_)
                 {
                     ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.4f, 1.0f), "%s",
-                        is_cn ? "\u8fde\u63a5\u6210\u529f" : "Connected");
+                        is_cn ? "连接成功！" : "Connected successfully!");
                     ImGui::Spacing();
                     ImGui::TextWrapped("%s", wifi_result_msg_.c_str());
                     ImGui::Spacing();
-                    ImGui::Text("%s %d dBm", is_cn ? "\u4fe1\u53f7\uff1a" : "Signal:", wifi_live_status_.signal_dbm);
+                    if (wifi_live_status_.signal_dbm != 0)
+                    {
+                        ImGui::Text("%s %d dBm", is_cn ? "信号强度：" : "Signal:", wifi_live_status_.signal_dbm);
+                    }
+                    ImGui::Spacing();
+                    ImGui::Separator();
+                    ImGui::Spacing();
+                    if (ImGui::Button(is_cn ? "完成并应用" : "Done", ImVec2(140, 0)))
+                    {
+                        wifi_step_ = 0;
+                        wifi_ifaces_.clear();
+                        state_.ForceNetworkModeNotifyOnce();
+                        state_.SetNetworkModeIndex(static_cast<int>(MenuState::NetworkMode::ConnectAp));
+                        ImGui::CloseCurrentPopup();
+                    }
                 }
                 else
                 {
                     ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.35f, 1.0f), "%s",
-                        is_cn ? "\u8fde\u63a5\u5931\u8d25" : "Connection failed");
+                        is_cn ? "连接失败" : "Connection failed");
                     ImGui::Spacing();
                     ImGui::TextWrapped("%s", wifi_result_msg_.c_str());
-                }
-
-                ImGui::Spacing();
-                ImGui::Separator();
-                ImGui::Spacing();
-
-                bool done = wifi_has_result_ && !wifi_connecting_;
-                if (!done)
-                    ImGui::BeginDisabled();
-                if (ImGui::Button(is_cn ? "\u5b8c\u6210" : "Done", ImVec2(130, 0)))
-                {
-                    wifi_step_ = 0;
-                    wifi_ifaces_.clear();
-                    if (wifi_result_ok_)
+                    ImGui::Spacing();
+                    ImGui::Separator();
+                    ImGui::Spacing();
+                    if (ImGui::Button(is_cn ? "重试密码" : "Retry Password", ImVec2(130, 0)))
                     {
-                        state_.ForceNetworkModeNotifyOnce();
-                        state_.SetNetworkModeIndex(static_cast<int>(MenuState::NetworkMode::ConnectAp));
+                        wifi_step_ = 2;
+                        wifi_has_result_ = false;
+                        wifi_pwd_focus_ = 1;
                     }
-                    ImGui::CloseCurrentPopup();
-                }
-                if (!done)
-                    ImGui::EndDisabled();
-                ImGui::SameLine();
-                if (ImGui::Button(is_cn ? "\u91cd\u8bd5" : "Retry", ImVec2(130, 0)))
-                {
-                    wifi_step_ = 2;
-                    wifi_has_result_ = false;
-                    wifi_pwd_focus_ = 1;
+                    ImGui::SameLine();
+                    if (ImGui::Button(is_cn ? "重选热点" : "Choose AP", ImVec2(130, 0)))
+                    {
+                        wifi_step_ = 1;
+                        wifi_has_result_ = false;
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button(is_cn ? "关闭" : "Close", ImVec2(100, 0)))
+                    {
+                        wifi_step_ = 0;
+                        wifi_ifaces_.clear();
+                        ImGui::CloseCurrentPopup();
+                    }
                 }
             }
 
@@ -1946,6 +2366,10 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
         if (ImGui::BeginPopupModal("confirm_kodi", nullptr,
                                    ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar))
         {
+            if (ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+            {
+                ImGui::CloseCurrentPopup();
+            }
             const char *msg = is_cn ? "\u6253\u5f00 KODI \u5c06\u5173\u95ed\u56fe\u4f20\u7a0b\u5e8f\uff0c\u662f\u5426\u7ee7\u7eed\uff1f"
                                     : "Opening KODI will close the video link process. Continue?";
             ImGui::TextWrapped("%s", msg);
@@ -2164,9 +2588,10 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
             ImGui::EndPopup();
             }
         }
-    }
-
-    ImGui::End();
-    ImGui::PopStyleColor(9);
+    ImGui::PopStyleColor(14);
     ImGui::PopStyleVar(5);
+    if (active_category_ < 0)
+        settings_open_amount_ = 0.0f;
+    settings_visible_last_ = rendered_category_this_frame >= 0;
+    last_rendered_category_ = rendered_category_this_frame;
 }

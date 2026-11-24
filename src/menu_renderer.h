@@ -91,6 +91,9 @@ private:
     ImTextureID icon_monitor_{};
     ImTextureID icon_temp_air_{};
     ImTextureID icon_temp_ground_{};
+    std::array<ImTextureID, 7> dock_icons_{};
+    std::array<float, 7> dock_hover_amount_{};
+    float settings_open_amount_ = 0.0f;
     std::function<void()> toggle_terminal_;
     std::function<bool()> terminal_visible_;
     std::function<void(const std::string &)> start_update_;
@@ -117,12 +120,16 @@ private:
     float wifi_status_timer_ = 0.0f;
     WifiStatus wifi_live_status_{};
     int wifi_pwd_focus_ = 0;
+    bool wifi_show_password_ = false;
     int pending_focus_index_ = -1;
     int last_focus_index_ = -1;
     std::array<std::vector<int>, 2> last_focus_columns_{};
     std::vector<int> last_focus_index_to_col_;
     std::vector<int> last_focus_index_to_pos_;
     bool menu_visible_last_ = false;
+    bool settings_visible_last_ = false;
+    int active_category_ = -1;
+    int last_rendered_category_ = -1;
     int kodi_popup_focus_index_ = 0;
     bool kodi_popup_focus_dirty_ = false;
     int pending_high_refresh_index_ = -1;

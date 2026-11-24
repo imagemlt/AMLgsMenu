@@ -33,6 +33,20 @@ add_executable(AMLgsMenu
     src/terminal.cpp
 )
 
+# Embed Dock artwork so the executable can be deployed on its own.
+set(dock_icon_header "${CMAKE_CURRENT_BINARY_DIR}/dock_icons.h")
+set(dock_icon_source "// Generated from icons/dock/*.png.\n#pragma once\n\nnamespace dock_icons\n{\n")
+foreach(icon IN ITEMS link display network audio record terminal system)
+    set(icon_file "${CMAKE_CURRENT_SOURCE_DIR}/icons/dock/${icon}.png")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${icon_file}")
+    file(READ "${icon_file}" icon_bytes HEX)
+    string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," icon_bytes "${icon_bytes}")
+    string(APPEND dock_icon_source "inline constexpr unsigned char ${icon}[] = {\n${icon_bytes}\n};\n")
+endforeach()
+string(APPEND dock_icon_source "}\n")
+file(GENERATE OUTPUT "${dock_icon_header}" CONTENT "${dock_icon_source}")
+target_include_directories(AMLgsMenu PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+
 if(AML_ENABLE_GLES)
     # OpenGL ES 2 is common on Amlogic platforms
     find_path(GLES2_INCLUDE_DIR NAMES GLES2/gl2.h)

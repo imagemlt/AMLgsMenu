@@ -900,6 +900,7 @@ void Application::Shutdown()
         transport_.reset();
     }
 
+    renderer_.reset();
     ImGui_ImplOpenGL3_Shutdown();
     ImGui::DestroyContext();
     display_platform_.Shutdown();

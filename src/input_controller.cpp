@@ -287,6 +287,7 @@ void InputController::HandleLibinputEvent(struct libinput_event *event, bool &ru
             add_key(ImGuiKey_RightSuper, down);
             io.AddKeyEvent(ImGuiMod_Super, down);
             break;
+        case KEY_ESC: add_key(ImGuiKey_Escape, down); break;
         case KEY_ENTER:
         case KEY_KPENTER: add_key(ImGuiKey_Enter, down); break;
         case KEY_BACKSPACE: add_key(ImGuiKey_Backspace, down); break;
